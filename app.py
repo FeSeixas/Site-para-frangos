@@ -26,30 +26,36 @@ def verificar_senha():
             novo_p = st.text_input("Escolha uma Senha",
                                    type="password", key="reg_p")
             if st.button("Cadastrar Nova Conta"):
-                df_users = conn.read(worksheet="usuarios")
-                if novo_u in df_users['Usuario'].values:
-                    st.error("Este usuário já existe!")
-                else:
-                    novo_reg = pd.DataFrame(
-                        [{"Usuario": novo_u, "Senha": novo_p}])
-                    updated_users = pd.concat([df_users, novo_reg])
-                    conn.update(worksheet="usuarios", data=updated_users)
-                    st.success(
-                        "Conta criada com sucesso! Vá para a aba Entrar.")
+                try:
+                    df_users = conn.read(worksheet="usuarios")
+                    if novo_u in df_users['Usuario'].values:
+                        st.error("Este usuário já existe!")
+                    else:
+                        novo_reg = pd.DataFrame(
+                            [{"Usuario": novo_u, "Senha": novo_p}])
+                        updated_users = pd.concat([df_users, novo_reg])
+                        conn.update(worksheet="usuarios", data=updated_users)
+                        st.success(
+                            "Conta criada com sucesso! Vá para a aba Entrar.")
+                except Exception as e:
+                    st.error(f"Erro ao acessar a planilha: {str(e)}")
 
         with aba_login:
             user = st.text_input("Usuário", key="log_u")
             senha = st.text_input("Senha", type="password", key="log_p")
             if st.button("Entrar"):
-                df_users = conn.read(worksheet="usuarios")
-                validado = df_users[(df_users['Usuario'] == user) & (
-                    df_users['Senha'] == str(senha))]
-                if not validado.empty:
-                    st.session_state["autenticado"] = True
-                    st.session_state["usuario"] = user
-                    st.rerun()
-                else:
-                    st.error("Usuário ou senha incorretos!")
+                try:
+                    df_users = conn.read(worksheet="usuarios")
+                    validado = df_users[(df_users['Usuario'] == user) & (
+                        df_users['Senha'] == str(senha))]
+                    if not validado.empty:
+                        st.session_state["autenticado"] = True
+                        st.session_state["usuario"] = user
+                        st.rerun()
+                    else:
+                        st.error("Usuário ou senha incorretos!")
+                except Exception as e:
+                    st.error(f"Erro ao acessar a planilha: {str(e)}")
         return False
     return True
 
