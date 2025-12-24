@@ -1,204 +1,162 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-import os
 from datetime import datetime
 from fpdf import FPDF
-import io
 
-# 1. Configuração da página e Estilo Personalizado
+# 1. Configuração da página e Estilo
 st.set_page_config(page_title="Diário de Treino", page_icon="💪", layout="wide")
 
-# CSS para Tema Escuro com detalhes em Roxo Escuro
+# Conexão com Google Sheets
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+# --- CONFIGURAÇÃO DE SEGURANÇA ---
+
+
+def verificar_senha():
+    if "autenticado" not in st.session_state:
+        st.session_state["autenticado"] = False
+
+    if not st.session_state["autenticado"]:
+        st.title("🔐 Acesso Restrito")
+        aba_login, aba_cad = st.tabs(["Entrar", "Criar Conta"])
+
+        with aba_cad:
+            novo_u = st.text_input("Escolha um Usuário", key="reg_u")
+            novo_p = st.text_input("Escolha uma Senha",
+                                   type="password", key="reg_p")
+            if st.button("Cadastrar Nova Conta"):
+                df_users = conn.read(worksheet="usuarios")
+                if novo_u in df_users['Usuario'].values:
+                    st.error("Este usuário já existe!")
+                else:
+                    novo_reg = pd.DataFrame(
+                        [{"Usuario": novo_u, "Senha": novo_p}])
+                    updated_users = pd.concat([df_users, novo_reg])
+                    conn.update(worksheet="usuarios", data=updated_users)
+                    st.success(
+                        "Conta criada com sucesso! Vá para a aba Entrar.")
+
+        with aba_login:
+            user = st.text_input("Usuário", key="log_u")
+            senha = st.text_input("Senha", type="password", key="log_p")
+            if st.button("Entrar"):
+                df_users = conn.read(worksheet="usuarios")
+                validado = df_users[(df_users['Usuario'] == user) & (
+                    df_users['Senha'] == str(senha))]
+                if not validado.empty:
+                    st.session_state["autenticado"] = True
+                    st.session_state["usuario"] = user
+                    st.rerun()
+                else:
+                    st.error("Usuário ou senha incorretos!")
+        return False
+    return True
+
+
+# CSS para Tema Escuro com detalhes em Roxo
 st.markdown("""
     <style>
-    /* Cor de fundo principal e texto */
-    .stApp {
-        background-color: #0E1117;
-        color: #FFFFFF;
-    }
-    
-    /* Customização das Métricas (Cartões) */
-    [data-testid="stMetricValue"] {
-        color: #BB86FC !important; /* Roxo claro para o valor */
-    }
-    [data-testid="stMetricLabel"] {
-        color: #E0E0E0 !important;
-    }
+    [data-testid="stMetricValue"] { color: #ffffff !important; }
+    [data-testid="stMetricLabel"] { color: #ffffff !important; }
     .stMetric {
-        background-color: #1E1E26;
+        background-color: rgba(255, 255, 255, 0.05);
         padding: 15px;
-        border-radius: 12px;
-        border-left: 5px solid #4B0082; /* Detalhe em Roxo Escuro */
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        border-radius: 10px;
+        border-left: 5px solid #6A0DAD;
     }
-
-    /* Botões em Roxo Escuro */
     div.stButton > button:first-child {
         background-color: #4B0082;
         color: white;
-        border-radius: 8px;
         border: none;
-        transition: all 0.3s ease;
     }
     div.stButton > button:first-child:hover {
         background-color: #6A0DAD;
         border: none;
-        transform: scale(1.02);
-    }
-
-    /* Ajuste de inputs e tabs */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 10px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        height: 50px;
-        background-color: #1E1E26;
-        border-radius: 8px 8px 0px 0px;
-        color: white;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #4B0082 !important;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# Definição de arquivos
-arquivo_corpo = 'dados_academia.csv'
-arquivo_treinos = 'meus_treinos.csv'
+if verificar_senha():
+    user_atual = st.session_state["usuario"]
+    st.sidebar.title(f"Olá, {user_atual}!")
+    if st.sidebar.button("Sair"):
+        st.session_state["autenticado"] = False
+        st.rerun()
 
-# --- FUNÇÕES DE APOIO ---
+    # --- FUNÇÕES ---
+    def gerar_pdf(df):
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", 'B', 16)
+        pdf.cell(
+            200, 10, txt=f"PLANO DE TREINO - {user_atual}", ln=True, align='C')
+        pdf.ln(10)
+        for treino in sorted(df['Treino'].unique()):
+            pdf.set_font("Arial", 'B', 12)
+            pdf.set_fill_color(230, 230, 230)
+            pdf.cell(0, 10, txt=f" {treino}", ln=True, fill=True)
+            df_t = df[df['Treino'] == treino]
+            pdf.set_font("Arial", '', 10)
+            for _, row in df_t.iterrows():
+                linha = f"{row['Exercicio']} | {row['Series']}x{row['Reps']} | KG: {row['KG']}"
+                pdf.cell(0, 8, txt=linha, ln=True)
+            pdf.ln(4)
+        return pdf.output(dest='S').encode('latin-1')
 
+    aba1, aba2 = st.tabs(["📈 Minha Evolução", "🏋️ Meus Treinos"])
 
-def gerar_pdf(df):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(200, 10, txt="PLANO DE TREINAMENTO", ln=True, align='C')
-    pdf.ln(10)
+    with aba1:
+        st.title("💪 Evolução Corporal")
+        df_corpo_total = conn.read(worksheet="evolucao")
+        df_f = df_corpo_total[df_corpo_total['Usuario'] == user_atual].copy()
 
-    col_agrupar = 'Treino' if 'Treino' in df.columns else df.columns[0]
-    for treino in sorted(df[col_agrupar].unique()):
-        pdf.set_font("Arial", 'B', 12)
-        pdf.set_fill_color(200, 200, 200)  # Fundo cinza para cabeçalho no PDF
-        pdf.cell(0, 10, txt=f" {treino}", ln=True, fill=True)
-
-        df_t = df[df[col_agrupar] == treino]
-        pdf.set_font("Arial", '', 10)
-        for _, row in df_t.iterrows():
-            linha = f"{row.get('Exercício', '')} | {row.get('Séries', '')}x{row.get('Repetições', '')} | KG: {row.get('KG', '')} | Desc: {row.get('Descanso', '')}"
-            pdf.cell(0, 8, txt=linha, ln=True)
-        pdf.ln(4)
-    return pdf.output(dest='S').encode('latin-1')
-
-
-def carregar_dados(caminho, colunas):
-    if os.path.exists(caminho):
-        try:
-            df = pd.read_csv(caminho)
-            for col in colunas:
-                if col not in df.columns:
-                    df[col] = ""
-            return df
-        except:
-            return pd.DataFrame(columns=colunas)
-    return pd.DataFrame(columns=colunas)
-
-# --- INTERFACE ---
-
-
-aba1, aba2 = st.tabs(["📈 Evolução Corporal", "🏋️ Planejamento de Treinos"])
-
-with aba1:
-    st.title("💪 Acompanhamento de Evolução")
-
-    with st.container():
-        st.subheader("📝 Novo Registro")
         with st.form("entrada_dados", clear_on_submit=True):
-            c1, c2, c3 = st.columns(3)
-            nome = c1.text_input("Nome", placeholder="Ex: Felipe")
-            idade = c2.number_input("Idade", 10, 100, 22)
-            altura = c3.number_input("Altura (m)", 1.0, 2.5, 1.90, step=0.01)
-
-            c4, c5, c6 = st.columns(3)
-            peso = c4.number_input("Peso (kg)", 30.0, 200.0, 66.0, step=0.1)
-            freq = c5.slider("Dias por Semana", 1, 7, 3)
-            horas = c6.number_input(
-                "Duração Média (h)", 0.5, 5.0, 1.3, step=0.1)
-
-            if st.form_submit_button("Salvar Evolução"):
-                if nome:
-                    imc = round(peso / (altura ** 2), 2)
-                    novo = {'Data': datetime.now().strftime("%d/%m/%Y"), 'Nome': nome.strip().title(),
-                            'Idade': idade, 'Altura': altura, 'Peso': peso, 'IMC': imc,
-                            'Frequência Semanal': freq, 'Duração (h)': horas}
-                    pd.DataFrame([novo]).to_csv(
-                        arquivo_corpo, mode='a', header=not os.path.exists(arquivo_corpo), index=False)
-                    st.toast("Evolução registrada!")
-                    st.rerun()
-
-    df_corpo = carregar_dados(arquivo_corpo, ['Data', 'Nome', 'Peso'])
-    if not df_corpo.empty:
-        st.divider()
-        u_nomes = df_corpo['Nome'].unique()
-        p_filtro = st.sidebar.selectbox("Filtro de Usuário:", u_nomes)
-
-        df_f = df_corpo[df_corpo['Nome'] == p_filtro].copy()
-
-        # Métricas com visual refinado
-        if len(df_f) > 0:
-            p_ini = float(df_f['Peso'].iloc[0])
-            p_at = float(df_f['Peso'].iloc[-1])
-            evol = p_at - p_ini
-
-            col_m1, col_m2, col_m3 = st.columns(3)
-            with col_m1:
-                st.metric("Peso Inicial", f"{p_ini}kg")
-            with col_m2:
-                st.metric("Peso Atual", f"{p_at}kg")
-            with col_m3:
-                st.metric("Evolução Total", f"{evol:.1f}kg", delta=evol)
-
-        with st.expander("🛠️ Gerenciar Histórico (Editar/Excluir)"):
-            df_ed_c = st.data_editor(
-                df_f, use_container_width=True, hide_index=True, num_rows="dynamic")
-            if st.button("Confirmar Mudanças no Histórico"):
-                df_outros = df_corpo[df_corpo['Nome'] != p_filtro]
-                pd.concat([df_outros, df_ed_c]).to_csv(
-                    arquivo_corpo, index=False)
-                st.success("Histórico atualizado!")
+            col1, col2 = st.columns(2)
+            peso = col1.number_input("Peso (kg)", 30.0, 200.0, 70.0)
+            altura = col2.number_input("Altura (m)", 1.0, 2.5, 1.75)
+            if st.form_submit_button("Registrar Peso"):
+                novo = pd.DataFrame([{
+                    "Usuario": user_atual,
+                    "Data": datetime.now().strftime("%d/%m/%Y"),
+                    "Peso": peso,
+                    "Altura": altura,
+                    "IMC": round(peso/(altura**2), 2)
+                }])
+                updated_corpo = pd.concat([df_corpo_total, novo])
+                conn.update(worksheet="evolucao", data=updated_corpo)
+                st.success("Registrado!")
                 st.rerun()
 
-        st.line_chart(df_f, x="Data", y="Peso", color="#6A0DAD")
+        if not df_f.empty:
+            p_ini, p_at = float(df_f['Peso'].iloc[0]), float(
+                df_f['Peso'].iloc[-1])
+            evol = p_at - p_ini
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Peso Inicial", f"{p_ini}kg")
+            m2.metric("Peso Atual", f"{p_at}kg")
+            m3.metric("Evolução", f"{evol:.1f}kg", delta=evol)
+            st.line_chart(df_f, x="Data", y="Peso")
 
-with aba2:
-    st.title("🏋️ Planejamento de Treinos")
-    cols_t = ['Treino', 'Exercício', 'Séries',
-              'Repetições', 'Descanso', 'KG', 'Observações']
-    df_t = carregar_dados(arquivo_treinos, cols_t)
+    with aba2:
+        st.title("🏋️ Meus Treinos")
+        df_treinos_total = conn.read(worksheet="treinos")
+        df_t_user = df_treinos_total[df_treinos_total['Usuario'] == user_atual].copy(
+        )
 
-    st.subheader("📝 Editor de Planilha")
-    df_ed = st.data_editor(df_t, use_container_width=True, hide_index=True, num_rows="dynamic",
-                           column_config={
-                               "Treino": st.column_config.SelectboxColumn("Treino", options=["TREINO A", "TREINO B", "TREINO C", "TREINO D", "CARDIO"], required=True),
-                               "Séries": st.column_config.SelectboxColumn("Séries", options=list(range(1, 11)))
-                           })
+        df_ed = st.data_editor(df_t_user.drop(columns=["Usuario"]), use_container_width=True, num_rows="dynamic",
+                               column_config={
+            "Treino": st.column_config.SelectboxColumn(options=["TREINO A", "TREINO B", "TREINO C", "CARDIO"]),
+        }, key="editor_treino")
 
-    c_save, c_pdf, c_del = st.columns([1, 1, 2])
-    if c_save.button("💾 Salvar Treinos"):
-        df_ed.to_csv(arquivo_treinos, index=False)
-        st.toast("Planilha salva!")
+        if st.button("💾 Salvar Planilha de Treino"):
+            df_ed["Usuario"] = user_atual
+            df_outros = df_treinos_total[df_treinos_total['Usuario']
+                                         != user_atual]
+            updated_treinos = pd.concat([df_outros, df_ed])
+            conn.update(worksheet="treinos", data=updated_treinos)
+            st.toast("Treino salvo na nuvem!")
 
-    if not df_ed.empty:
-        c_pdf.download_button("📄 Baixar PDF", data=gerar_pdf(
-            df_ed), file_name="treino.pdf")
-
-        st.divider()
-        st.subheader("📋 Visualização por Grupos")
-        for t in sorted(df_ed['Treino'].unique()):
-            with st.expander(f"📖 {t}", expanded=True):
-                st.table(df_ed[df_ed['Treino'] == t].drop(columns=['Treino']))
-
-    if c_del.button("⚠️ Apagar Planilha Completa"):
-        if os.path.exists(arquivo_treinos):
-            os.remove(arquivo_treinos)
-        st.rerun()
+        if not df_t_user.empty:
+            st.download_button("📄 Exportar PDF", data=gerar_pdf(
+                df_t_user), file_name="treino.pdf")
