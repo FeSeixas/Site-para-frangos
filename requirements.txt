@@ -3,3 +3,4 @@ pandas
 fpdf2
 openpyxl
 Pillow
+st-gsheets-connection
