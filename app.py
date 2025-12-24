@@ -1,18 +1,20 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
 from fpdf import FPDF
+import io
 
 # 1. Configuração da página e Estilo
 st.set_page_config(page_title="Diário de Treino", page_icon="💪", layout="wide")
 
-# Conexão com Google Sheets
-conn = st.connection("gsheets", type=GSheetsConnection)
+# --- FUNÇÃO DE CONEXÃO DIRETA (CORRIGE O ERRO 302) ---
+def carregar_dados_direto(aba):
+    """Lê os dados da planilha usando o link de exportação CSV direta"""
+    spreadsheet_id = "1c7NZQWQv_gV9KFvSnFN8tQpUzJqpj8zEu_35aqTUWHg"
+    url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/gviz/tq?tqx=out:csv&sheet={aba}"
+    return pd.read_csv(url)
 
 # --- CONFIGURAÇÃO DE SEGURANÇA ---
-
-
 def verificar_senha():
     if "autenticado" not in st.session_state:
         st.session_state["autenticado"] = False
@@ -20,34 +22,31 @@ def verificar_senha():
     if not st.session_state["autenticado"]:
         st.title("🔐 Acesso Restrito")
         aba_login, aba_cad = st.tabs(["Entrar", "Criar Conta"])
-
+        
         with aba_cad:
+            st.info("O cadastro requer conexão com a nuvem. Use o login se já tiver conta.")
             novo_u = st.text_input("Escolha um Usuário", key="reg_u")
-            novo_p = st.text_input("Escolha uma Senha",
-                                   type="password", key="reg_p")
+            novo_p = st.text_input("Escolha uma Senha", type="password", key="reg_p")
             if st.button("Cadastrar Nova Conta"):
-                try:
-                    df_users = conn.read(worksheet="usuarios")
-                    if novo_u in df_users['Usuario'].values:
-                        st.error("Este usuário já existe!")
-                    else:
-                        novo_reg = pd.DataFrame(
-                            [{"Usuario": novo_u, "Senha": novo_p}])
-                        updated_users = pd.concat([df_users, novo_reg])
-                        conn.update(worksheet="usuarios", data=updated_users)
-                        st.success(
-                            "Conta criada com sucesso! Vá para a aba Entrar.")
-                except Exception as e:
-                    st.error(f"Erro ao acessar a planilha: {str(e)}")
+                # Nota: A escrita ainda usa a conexão oficial para salvar dados
+                from streamlit_gsheets import GSheetsConnection
+                conn = st.connection("gsheets", type=GSheetsConnection)
+                df_users = carregar_dados_direto("usuarios")
+                if novo_u in df_users['Usuario'].values:
+                    st.error("Este usuário já existe!")
+                else:
+                    novo_reg = pd.DataFrame([{"Usuario": novo_u, "Senha": str(novo_p)}])
+                    updated_users = pd.concat([df_users, novo_reg])
+                    conn.update(worksheet="usuarios", data=updated_users)
+                    st.success("Conta criada! Vá para a aba Entrar.")
 
         with aba_login:
             user = st.text_input("Usuário", key="log_u")
             senha = st.text_input("Senha", type="password", key="log_p")
             if st.button("Entrar"):
                 try:
-                    df_users = conn.read(worksheet="usuarios")
-                    validado = df_users[(df_users['Usuario'] == user) & (
-                        df_users['Senha'] == str(senha))]
+                    df_users = carregar_dados_direto("usuarios")
+                    validado = df_users[(df_users['Usuario'] == user) & (df_users['Senha'].astype(str) == str(senha))]
                     if not validado.empty:
                         st.session_state["autenticado"] = True
                         st.session_state["usuario"] = user
@@ -55,35 +54,24 @@ def verificar_senha():
                     else:
                         st.error("Usuário ou senha incorretos!")
                 except Exception as e:
-                    st.error(f"Erro ao acessar a planilha: {str(e)}")
+                    st.error(f"Erro de conexão: {e}")
         return False
     return True
-
 
 # CSS para Tema Escuro com detalhes em Roxo
 st.markdown("""
     <style>
     [data-testid="stMetricValue"] { color: #ffffff !important; }
     [data-testid="stMetricLabel"] { color: #ffffff !important; }
-    .stMetric {
-        background-color: rgba(255, 255, 255, 0.05);
-        padding: 15px;
-        border-radius: 10px;
-        border-left: 5px solid #6A0DAD;
-    }
-    div.stButton > button:first-child {
-        background-color: #4B0082;
-        color: white;
-        border: none;
-    }
-    div.stButton > button:first-child:hover {
-        background-color: #6A0DAD;
-        border: none;
-    }
+    .stMetric { background-color: rgba(255, 255, 255, 0.05); padding: 15px; border-radius: 10px; border-left: 5px solid #6A0DAD; }
+    div.stButton > button:first-child { background-color: #4B0082; color: white; border: none; }
+    div.stButton > button:first-child:hover { background-color: #6A0DAD; border: none; }
     </style>
     """, unsafe_allow_html=True)
 
 if verificar_senha():
+    from streamlit_gsheets import GSheetsConnection
+    conn = st.connection("gsheets", type=GSheetsConnection)
     user_atual = st.session_state["usuario"]
     st.sidebar.title(f"Olá, {user_atual}!")
     if st.sidebar.button("Sair"):
@@ -95,8 +83,7 @@ if verificar_senha():
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", 'B', 16)
-        pdf.cell(
-            200, 10, txt=f"PLANO DE TREINO - {user_atual}", ln=True, align='C')
+        pdf.cell(200, 10, txt=f"PLANO DE TREINO - {user_atual}", ln=True, align='C')
         pdf.ln(10)
         for treino in sorted(df['Treino'].unique()):
             pdf.set_font("Arial", 'B', 12)
@@ -114,7 +101,7 @@ if verificar_senha():
 
     with aba1:
         st.title("💪 Evolução Corporal")
-        df_corpo_total = conn.read(worksheet="evolucao")
+        df_corpo_total = carregar_dados_direto("evolucao")
         df_f = df_corpo_total[df_corpo_total['Usuario'] == user_atual].copy()
 
         with st.form("entrada_dados", clear_on_submit=True):
@@ -135,8 +122,7 @@ if verificar_senha():
                 st.rerun()
 
         if not df_f.empty:
-            p_ini, p_at = float(df_f['Peso'].iloc[0]), float(
-                df_f['Peso'].iloc[-1])
+            p_ini, p_at = float(df_f['Peso'].iloc[0]), float(df_f['Peso'].iloc[-1])
             evol = p_at - p_ini
             m1, m2, m3 = st.columns(3)
             m1.metric("Peso Inicial", f"{p_ini}kg")
@@ -146,23 +132,20 @@ if verificar_senha():
 
     with aba2:
         st.title("🏋️ Meus Treinos")
-        df_treinos_total = conn.read(worksheet="treinos")
-        df_t_user = df_treinos_total[df_treinos_total['Usuario'] == user_atual].copy(
-        )
+        df_treinos_total = carregar_dados_direto("treinos")
+        df_t_user = df_treinos_total[df_treinos_total['Usuario'] == user_atual].copy()
 
         df_ed = st.data_editor(df_t_user.drop(columns=["Usuario"]), use_container_width=True, num_rows="dynamic",
-                               column_config={
+            column_config={
             "Treino": st.column_config.SelectboxColumn(options=["TREINO A", "TREINO B", "TREINO C", "CARDIO"]),
         }, key="editor_treino")
 
         if st.button("💾 Salvar Planilha de Treino"):
             df_ed["Usuario"] = user_atual
-            df_outros = df_treinos_total[df_treinos_total['Usuario']
-                                         != user_atual]
+            df_outros = df_treinos_total[df_treinos_total['Usuario'] != user_atual]
             updated_treinos = pd.concat([df_outros, df_ed])
             conn.update(worksheet="treinos", data=updated_treinos)
             st.toast("Treino salvo na nuvem!")
 
         if not df_t_user.empty:
-            st.download_button("📄 Exportar PDF", data=gerar_pdf(
-                df_t_user), file_name="treino.pdf")
+            st.download_button("📄 Exportar PDF", data=gerar_pdf(df_t_user), file_name="treino.pdf")
