@@ -26,23 +26,20 @@ def verificar_senha():
     if not st.session_state["autenticado"]:
         st.title("🔐 Acesso Restrito")
         aba_login, aba_cad = st.tabs(["Entrar", "Criar Conta"])
-
+        
         with aba_cad:
-            st.info(
-                "O cadastro requer conexão com a nuvem. Use o login se já tiver conta.")
+            st.info("O cadastro requer conexão com a nuvem. Use o login se já tiver conta.")
             novo_u = st.text_input("Escolha um Usuário", key="reg_u")
-            novo_p = st.text_input("Escolha uma Senha",
-                                   type="password", key="reg_p")
+            novo_p = st.text_input("Escolha uma Senha", type="password", key="reg_p")
             if st.button("Cadastrar Nova Conta"):
-                # Nota: A escrita ainda usa a conexão oficial para salvar dados
                 from streamlit_gsheets import GSheetsConnection
                 conn = st.connection("gsheets", type=GSheetsConnection)
                 df_users = carregar_dados_direto("usuarios")
                 if novo_u in df_users['Usuario'].values:
                     st.error("Este usuário já existe!")
                 else:
-                    novo_reg = pd.DataFrame(
-                        [{"Usuario": novo_u, "Senha": str(novo_p)}])
+                    # Forçamos a senha a ser salva como string
+                    novo_reg = pd.DataFrame([{"Usuario": novo_u, "Senha": str(novo_p)}])
                     updated_users = pd.concat([df_users, novo_reg])
                     conn.update(worksheet="usuarios", data=updated_users)
                     st.success("Conta criada! Vá para a aba Entrar.")
@@ -53,8 +50,10 @@ def verificar_senha():
             if st.button("Entrar"):
                 try:
                     df_users = carregar_dados_direto("usuarios")
-                    validado = df_users[(df_users['Usuario'] == user) & (
-                        df_users['Senha'].astype(str) == str(senha))]
+                    # AJUSTE AQUI: Convertemos as senhas da planilha para texto antes de comparar
+                    df_users['Senha'] = df_users['Senha'].astype(str)
+                    
+                    validado = df_users[(df_users['Usuario'] == user) & (df_users['Senha'] == str(senha))]
                     if not validado.empty:
                         st.session_state["autenticado"] = True
                         st.session_state["usuario"] = user
@@ -65,7 +64,6 @@ def verificar_senha():
                     st.error(f"Erro de conexão: {e}")
         return False
     return True
-
 
 # CSS para Tema Escuro com detalhes em Roxo
 st.markdown("""
@@ -163,3 +161,4 @@ if verificar_senha():
         if not df_t_user.empty:
             st.download_button("📄 Exportar PDF", data=gerar_pdf(
                 df_t_user), file_name="treino.pdf")
+
