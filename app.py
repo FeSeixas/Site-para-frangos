@@ -1,675 +1,528 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 from fpdf import FPDF
-import io
-import time
 import altair as alt
 from streamlit_gsheets import GSheetsConnection
+import time
 
-# 1. Configuração da página e Estilo
-st.set_page_config(page_title="Diário de Treino RPG",
-                   page_icon="⚔️", layout="wide")
+# 1. Configuração da página
+st.set_page_config(page_title="Life RPG", page_icon="🐉", layout="wide")
 
-# --- FUNÇÃO DE CONEXÃO DIRETA COM CACHE ---
+# --- FUNÇÕES AUXILIARES ---
 
 
 @st.cache_data(ttl=5)
 def carregar_dados_direto(aba):
-    """Lê os dados da planilha usando o link de exportação CSV direta"""
     try:
+        # Substitua pelo ID da sua planilha se necessário
         spreadsheet_id = "1c7NZQWQv_gV9KFvSnFN8tQpUzJqpj8zEu_35aqTUWHg"
         url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/gviz/tq?tqx=out:csv&sheet={aba}"
         return pd.read_csv(url)
     except:
-        return pd.DataFrame()  # Retorna vazio se a aba não existir ainda
+        return pd.DataFrame()
 
-# --- CONFIGURAÇÃO DE SEGURANÇA ---
+
+def gerar_pdf(df, user_name):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(200, 10, f"FICHA DE PERSONAGEM - {user_name}", ln=True, align='C')
+    pdf.ln(10)
+    for treino in sorted(df['Treino'].unique()):
+        pdf.set_font("Arial", 'B', 12)
+        pdf.set_fill_color(200, 220, 255)
+        pdf.cell(0, 10, f" >> {treino}", ln=True, fill=True)
+        df_t = df[df['Treino'] == treino]
+        pdf.set_font("Arial", '', 10)
+        for _, row in df_t.iterrows():
+            linha = f"[ ] {row['Exercicio']} | {row['Series']}x{row['Reps']} | Carga: {row['KG']}kg"
+            pdf.cell(0, 8, linha, ln=True)
+        pdf.ln(4)
+    saida = pdf.output(dest='S')
+    return saida.encode('latin-1') if isinstance(saida, str) else bytes(saida)
+
+
+def get_neon_color(treino_name):
+    if treino_name == "TREINO A":
+        return "var(--neon-blue)"
+    if treino_name == "TREINO B":
+        return "var(--neon-gold)"
+    if treino_name == "TREINO C":
+        return "var(--neon-green)"
+    if treino_name == "TREINO D":
+        return "var(--neon-orange)"
+    if treino_name == "TREINO E":
+        return "var(--neon-purple)"
+    if treino_name == "CARDIO":
+        return "var(--neon-pink)"
+    if treino_name == "DESCANSO":
+        return "var(--neon-red)"
+    return "#333"
+
+
+def calcular_status_rpg(df_evolucao, volume_total, df_checkins, df_estudos):
+    # 1. FORÇA (STR)
+    qtd_marcos = 0
+    ultima_data = None
+    if not df_evolucao.empty:
+        try:
+            df_c = df_evolucao.copy()
+            df_c['Data_dt'] = pd.to_datetime(
+                df_c['Data'], dayfirst=True, errors='coerce')
+            df_c = df_c.sort_values('Data_dt', ascending=True)
+            dts = df_c['Data_dt'].dropna().tolist()
+            if dts:
+                qtd_marcos = 1
+                ultima_data = dts[0]
+                for d in dts[1:]:
+                    if (d - ultima_data).days >= 7:
+                        qtd_marcos += 1
+                        ultima_data = d
+        except:
+            pass
+
+    xp_str = (qtd_marcos * 150) + int(volume_total * 0.1) + \
+        (len(df_checkins) * 25)
+
+    # 2. INTELIGÊNCIA (INT)
+    xp_int = 0
+    pags = 0
+    horas = 0
+    if not df_estudos.empty:
+        # Garante que Qtd é número
+        df_estudos['Qtd'] = pd.to_numeric(
+            df_estudos['Qtd'], errors='coerce').fillna(0)
+
+        for _, row in df_estudos.iterrows():
+            t = row['Tipo']
+            q = row['Qtd']
+
+            if t == 'Livro':
+                # NOVA LÓGICA: 5 XP a cada 3 páginas
+                xp_int += int(q * (5/3))
+                pags += q
+            elif t in ['Mangá', 'HQ']:
+                # NOVA LÓGICA: 2 XP a cada 3 páginas
+                xp_int += int(q * (2/3))
+                pags += q
+            elif t in ['Estudos', 'Curso']:
+                xp_int += int(q * 50)
+                horas += q
+
+    # 3. GLOBAL
+    xp_total = xp_str + int(xp_int)
+    nivel = 1 + int(xp_total / 1000)
+
+    # Títulos e Ícones (Emojis Seguros)
+    if nivel < 5:
+        titulo, icone = "Novato", "🌱"       # Broto
+    elif nivel < 10:
+        titulo, icone = "Aprendiz", "⚔️"    # Espadas
+    elif nivel < 20:
+        titulo, icone = "Guerreiro", "🛡️"   # Escudo
+    elif nivel < 40:
+        titulo, icone = "Veterano", "🦁"    # Leão
+    elif nivel < 60:
+        titulo, icone = "Mestre", "👑"      # Coroa
+    else:
+        titulo, icone = "Lenda", "🐉"                # Dragão
+
+    return nivel, xp_total, xp_total % 1000, 1000, titulo, icone, ultima_data, xp_str, int(xp_int), pags, horas
+
+# --- LOGIN ---
 
 
 def verificar_senha():
     if "autenticado" not in st.session_state:
         st.session_state["autenticado"] = False
-
     if not st.session_state["autenticado"]:
-        col_c, _ = st.columns([1, 2])
-        with col_c:
-            st.title("🛡️ Login do Aventureiro")
-            opcao_login = st.radio("Escolha uma opção:", [
-                                   "Entrar", "Se listar na Guilda"], horizontal=True)
-
-            if opcao_login == "Se listar na Guilda":
-                st.info("O cadastro requer conexão com a Guilda (Nuvem).")
-                novo_u = st.text_input("Escolha um Nome de Herói", key="reg_u")
-                novo_p = st.text_input(
-                    "Escolha uma Senha", type="password", key="reg_p")
-
-                if st.button("Jurar Bandeira"):
+        c1, _ = st.columns([1, 2])
+        with c1:
+            st.title("🛡️ Login RPG")
+            mode = st.radio(
+                "Opção", ["Entrar", "Criar Conta"], horizontal=True)
+            if mode == "Criar Conta":
+                u = st.text_input("Novo Herói")
+                p = st.text_input("Nova Senha", type="password")
+                if st.button("Criar"):
                     conn = st.connection("gsheets", type=GSheetsConnection)
-                    df_users = carregar_dados_direto("usuarios")
-
-                    if not df_users.empty and novo_u in df_users['Usuario'].values:
-                        st.error("Este herói já existe nas lendas!")
+                    df = carregar_dados_direto("usuarios")
+                    if not df.empty and u in df['Usuario'].values:
+                        st.error("Já existe!")
                     else:
-                        novo_reg = pd.DataFrame(
-                            [{"Usuario": novo_u, "Senha": str(novo_p)}])
-                        updated_users = pd.concat([df_users, novo_reg])
-                        conn.update(worksheet="usuarios", data=updated_users)
+                        conn.update(worksheet="usuarios", data=pd.concat(
+                            [df, pd.DataFrame([{"Usuario": u, "Senha": str(p)}])]))
+                        st.success("Criado! Faça login.")
                         st.cache_data.clear()
-                        st.success("Conta criada! Mude para a opção 'Entrar'.")
-
-            else:  # Opção Entrar
-                with st.form("login_form"):
-                    user = st.text_input("Nome do Herói", key="log_u")
-                    senha = st.text_input(
-                        "Senha", type="password", key="log_p")
-                    submit_login = st.form_submit_button(
-                        "Entrar na Masmorra", type="primary")
-
-                if submit_login:
-                    try:
-                        df_users = carregar_dados_direto("usuarios")
-                        if not df_users.empty:
-                            df_users['Senha'] = df_users['Senha'].astype(str)
-                            validado = df_users[(df_users['Usuario'] == user) & (
-                                df_users['Senha'] == str(senha))]
-
-                            if not validado.empty:
+            else:
+                with st.form("log"):
+                    u = st.text_input("Herói")
+                    p = st.text_input("Senha", type="password")
+                    if st.form_submit_button("Entrar"):
+                        df = carregar_dados_direto("usuarios")
+                        if not df.empty:
+                            df['Senha'] = df['Senha'].astype(str)
+                            if not df[(df['Usuario'] == u) & (df['Senha'] == str(p))].empty:
                                 st.session_state["autenticado"] = True
-                                st.session_state["usuario"] = user
+                                st.session_state["usuario"] = u
                                 st.rerun()
                             else:
-                                st.error("Credenciais inválidas!")
+                                st.error("Senha incorreta")
                         else:
-                            st.error("Erro ao carregar usuários.")
-                    except Exception as e:
-                        st.error(f"Erro de conexão: {e}")
+                            st.error("Erro de conexão")
         return False
     return True
 
-# --- LÓGICA DE GAMIFICATION (RPG) ---
 
-
-def calcular_status_rpg(df_evolucao, volume_total, df_checkins):
-    qtd_marcos_validos = 0
-    ultima_data_marco = None
-
-    if not df_evolucao.empty:
-        try:
-            df_calc = df_evolucao.copy()
-            df_calc['Data_dt'] = pd.to_datetime(
-                df_calc['Data'], dayfirst=True, errors='coerce')
-            df_calc = df_calc.sort_values('Data_dt', ascending=True)
-            datas_validas = df_calc['Data_dt'].dropna().tolist()
-
-            if datas_validas:
-                qtd_marcos_validos = 1
-                ultima_data_marco = datas_validas[0]
-                for data in datas_validas[1:]:
-                    diferenca = (data - ultima_data_marco).days
-                    if diferenca >= 7:
-                        qtd_marcos_validos += 1
-                        ultima_data_marco = data
-        except Exception:
-            qtd_marcos_validos = len(df_evolucao)
-
-    xp_logs = qtd_marcos_validos * 150
-    xp_forca = int(volume_total * 0.1)
-    qtd_checkins = len(df_checkins)
-    xp_checkin = qtd_checkins * 25
-
-    total_xp = xp_logs + xp_forca + xp_checkin
-
-    nivel = 1 + int(total_xp / 1000)
-    xp_atual_nivel = total_xp % 1000
-    xp_proximo = 1000
-
-    if nivel < 5:
-        titulo = "Aldeão Iniciante"
-        icone = "👨‍🌾"
-    elif nivel < 10:
-        titulo = "Escudeiro Determinado"
-        icone = "🗡️"
-    elif nivel < 20:
-        titulo = "Guerreiro de Bronze"
-        icone = "⚔️"
-    elif nivel < 40:
-        titulo = "Cavaleiro de Prata"
-        icone = "🏇"
-    elif nivel < 60:
-        titulo = "Senhor da Guerra"
-        icone = "👹"
-    else:
-        titulo = "Divindade do Ferro"
-        icone = "⚡"
-
-    return nivel, total_xp, xp_atual_nivel, xp_proximo, titulo, icone, ultima_data_marco
-
-# --- FUNÇÃO AUXILIAR PARA CORES NEON ---
-
-
-def get_neon_color(treino_name):
-    # Cores Neon vibrantes definidas no CSS :root
-    if treino_name == "TREINO A":
-        return "var(--neon-a)"
-    if treino_name == "TREINO B":
-        return "var(--neon-b)"
-    if treino_name == "TREINO C":
-        return "var(--neon-c)"
-    if treino_name == "TREINO D":
-        return "var(--neon-d)"
-    if treino_name == "TREINO E":
-        return "var(--neon-e)"
-    if treino_name == "CARDIO":
-        return "var(--neon-cardio)"
-    if treino_name == "DESCANSO":
-        return "var(--neon-rest)"
-    return "#333"
-
-
-# CSS Aprimorado (CORES SUAVIZADAS)
+# --- CSS VISUAL ---
 st.markdown("""
-    <style>
-    /* Definição das Cores Neon - SUAVIZADAS */
-    :root {
-        --neon-a: #00bcd4; /* Ciano mais calmo */
-        --neon-b: #ffd700; /* Dourado */
-        --neon-c: #32cd32; /* Verde Lima */
-        --neon-d: #ff8c00; /* Laranja Escuro */
-        --neon-e: #9932cc; /* Orquídea Escura */
-        --neon-cardio: #ff1493; /* Deep Pink */
-        --neon-rest: #cd5c5c; /* Vermelho Indiano (menos agressivo) */
-    }
+<style>
+:root {
+    --neon-blue: #00f2ff; --neon-gold: #ffea00; --neon-green: #39ff14; 
+    --neon-orange: #ff5e00; --neon-purple: #b700ff; --neon-pink: #ff00d4; --neon-red: #ff0000;
+    --bg-dark: #0e1117; --card-bg: rgba(255,255,255,0.05);
+}
+.stApp { background-color: var(--bg-dark); }
 
-    .stApp { background-color: #0e1117; }
-    [data-testid="stMetricValue"] { color: #00ffca !important; text-shadow: 0px 0px 10px rgba(0,255,202,0.5); font-family: 'Courier New', monospace; }
-    .stMetric { background-color: rgba(20, 20, 40, 0.8); padding: 10px; border: 1px solid #4B0082; border-radius: 5px; box-shadow: 0 0 10px rgba(75, 0, 130, 0.2); }
-    .stProgress > div > div > div > div { background-image: linear-gradient(to right, #4B0082, #00ffca); }
-    div.stButton > button:first-child { background-color: #2e004f; color: #d4d4d4; border: 1px solid #6A0DAD; }
-    div.stButton > button:first-child:hover { background-color: #00ffca; color: black; border-color: white; box-shadow: 0px 0px 15px #00ffca; }
-    .avatar-icon { font-size: 80px; text-align: center; line-height: 1.2; filter: drop-shadow(0 0 10px #00ffca); }
-    
-    /* Estilo para a Navegação (Radio horizontal) */
-    div[data-testid="stRadio"] > div {
-        display: flex;
-        justify-content: center;
-        gap: 20px;
-        background-color: rgba(255, 255, 255, 0.05);
-        padding: 10px;
-        border-radius: 10px;
-    }
-    
-    /* Estilo do Calendário Visual */
-    .day-header {
-        font-weight: bold;
-        text-align: center;
-        padding: 8px;
-        border-radius: 5px 5px 0 0;
-        margin-bottom: 0px;
-        color: black;
-        text-transform: uppercase;
-        font-size: 0.9em;
-        /* Box shadow aplicado via Python para controle de cor */
-    }
-    .day-body {
-        background-color: rgba(255,255,255,0.03);
-        padding: 10px;
-        border-radius: 0 0 5px 5px;
-        font-size: 0.8em;
-        min-height: 150px;
-        border: 1px solid rgba(255,255,255,0.05);
-        border-top: none;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+/* HUD */
+.hud-box {
+    background: rgba(20,20,30,0.8); border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 15px; padding: 20px; margin-bottom: 20px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+}
+.avatar { font-size: 60px; text-align: center; }
+.stat-bar-label { font-weight: bold; font-size: 0.9em; margin-bottom: 2px; display: block; }
+.hp { color: #ff4d4d; } .mp { color: #4d94ff; }
 
+/* NAV */
+div[data-testid="stRadio"] > div {
+    background: var(--card-bg); padding: 5px; border-radius: 10px;
+    display: flex; justify-content: space-around;
+}
+
+/* CARDS DE ESTUDO */
+.mage-card {
+    background: linear-gradient(135deg, rgba(30,0,50,0.9), rgba(10,10,20,0.9));
+    border-left: 4px solid #b700ff;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 10px;
+    box-shadow: 0 2px 10px rgba(183, 0, 255, 0.15);
+    transition: transform 0.2s;
+}
+.mage-card:hover { transform: translateY(-2px); border-left-color: #00f2ff; }
+.mage-title { color: #fff; font-weight: bold; font-size: 1.05em; margin-bottom: 5px; }
+.mage-tags { display: flex; gap: 8px; font-size: 0.75em; align-items: center; }
+.tag { padding: 2px 8px; border-radius: 4px; font-weight: bold; color: #000; }
+.tag-livro { background: #00f2ff; }
+.tag-hq { background: #ff00d4; color: white; }
+.tag-estudos { background: #ffea00; } 
+.mage-date { margin-left: auto; color: #888; font-size: 0.75em; }
+
+/* CALENDÁRIO */
+.cal-day { font-weight:bold; text-align:center; padding:5px; border-radius:5px 5px 0 0; color:black; font-size:0.8em; }
+.cal-body { background:rgba(255,255,255,0.03); padding:8px; min-height:120px; font-size:0.8em; border-radius:0 0 5px 5px; }
+</style>
+""", unsafe_allow_html=True)
+
+# --- EXECUÇÃO PRINCIPAL ---
 if verificar_senha():
     conn = st.connection("gsheets", type=GSheetsConnection)
-    user_atual = st.session_state["usuario"]
+    user = st.session_state["usuario"]
 
-    # --- CARREGAMENTO DE DADOS ---
-    df_corpo_total = carregar_dados_direto("evolucao")
-    df_treinos_total = carregar_dados_direto("treinos")
-    df_checkins_total = carregar_dados_direto("checkins")
-    df_agenda_total = carregar_dados_direto("agenda")
+    # CARREGAR DADOS
+    df_users_tot = carregar_dados_direto("usuarios")
+    df_evol_tot = carregar_dados_direto("evolucao")
+    df_treinos_tot = carregar_dados_direto("treinos")
+    df_check_tot = carregar_dados_direto("checkins")
+    df_agenda_tot = carregar_dados_direto("agenda")
+    df_estudos_tot = carregar_dados_direto("estudos")
 
-    # Filtra dados do usuário
-    df_f = df_corpo_total[df_corpo_total['Usuario'] == user_atual].copy()
-    df_t_user = df_treinos_total[df_treinos_total['Usuario']
-                                 == user_atual].copy()
+    # FILTRAR USER
+    df_f = df_evol_tot[df_evol_tot['Usuario'] == user].copy()
+    df_t = df_treinos_tot[df_treinos_tot['Usuario'] == user].copy()
 
-    if not df_checkins_total.empty:
-        df_c_user = df_checkins_total[df_checkins_total['Usuario'] == user_atual].copy(
-        )
+    # Tratamento seguro se vazio
+    if not df_check_tot.empty:
+        df_c = df_check_tot[df_check_tot['Usuario'] == user].copy()
     else:
-        df_c_user = pd.DataFrame(columns=["Usuario", "Data"])
+        df_c = pd.DataFrame(columns=["Usuario", "Data"])
 
-    # Filtra Agenda do Usuário
-    if not df_agenda_total.empty:
-        df_a_user = df_agenda_total[df_agenda_total['Usuario']
-                                    == user_atual].copy()
+    if not df_agenda_tot.empty:
+        df_a = df_agenda_tot[df_agenda_tot['Usuario'] == user].copy()
     else:
-        df_a_user = pd.DataFrame()
+        df_a = pd.DataFrame()
 
-    # Cálculo preliminar de volume
+    if not df_estudos_tot.empty:
+        df_e = df_estudos_tot[df_estudos_tot['Usuario'] == user].copy()
+    else:
+        df_e = pd.DataFrame(
+            columns=["Usuario", "Data", "Assunto", "Qtd", "Tipo"])
+
+    # CALCULAR VOLUME
+    vol = 0
     try:
-        for col in ['Series', 'Reps', 'KG']:
-            df_t_user[col] = pd.to_numeric(df_t_user[col].astype(
-                str).str.replace(',', '.'), errors='coerce').fillna(0)
-        volume_total = (df_t_user['Series'] *
-                        df_t_user['Reps'] * df_t_user['KG']).sum()
+        for c in ['Series', 'Reps', 'KG']:
+            df_t[c] = pd.to_numeric(df_t[c].astype(str).str.replace(
+                ',', '.'), errors='coerce').fillna(0)
+        vol = (df_t['Series']*df_t['Reps']*df_t['KG']).sum()
     except:
-        volume_total = 0
+        pass
 
-    # Calcula Stats RPG
-    nivel, total_xp, xp_atual, xp_prox, titulo, icone, ultima_data_xp = calcular_status_rpg(
-        df_f, volume_total, df_c_user)
+    # --- CALCULAR RPG (COM PAGS E HORAS) ---
+    nivel, total_xp, xp_curr, xp_next, title, icon, last_dt, xp_str, xp_int, pags, horas = calcular_status_rpg(
+        df_f, vol, df_c, df_e)
 
-    # --- HUD DO JOGADOR ---
-    with st.container():
-        c_avatar, c_stats, c_logout = st.columns([1, 6, 1])
-        with c_avatar:
+    # --- HUD ---
+    st.markdown('<div class="hud-box">', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns([1, 5, 1])
+    with c1:
+        st.markdown(
+            f"<div class='avatar'>{icon}</div>", unsafe_allow_html=True)
+    with c2:
+        st.markdown(
+            f"### {user} | Lvl {nivel} - <span style='color:#ccc'>{title}</span>", unsafe_allow_html=True)
+        h1, h2 = st.columns(2)
+        with h1:
             st.markdown(
-                f"<div class='avatar-icon'>{icone}</div>", unsafe_allow_html=True)
-        with c_stats:
-            st.markdown(f"### {user_atual} | Lvl {nivel} - *{titulo}*")
-            col_xp, col_bar = st.columns([1, 4])
-            col_xp.caption(f"XP: {xp_atual}/{xp_prox}")
-            col_bar.progress(xp_atual / xp_prox)
-        with c_logout:
-            st.write("")
-            if st.button("🚪 Sair"):
-                st.session_state["autenticado"] = False
-                st.rerun()
+                f"<span class='stat-bar-label hp'>HP (Físico): {xp_str} XP</span>", unsafe_allow_html=True)
+            st.progress(min(1.0, xp_str / (xp_str + xp_int + 1)
+                        if (xp_str+xp_int) > 0 else 0))
+        with h2:
+            st.markdown(
+                f"<span class='stat-bar-label mp'>MP (Mental): {xp_int} XP</span>", unsafe_allow_html=True)
+            st.progress(min(1.0, xp_int / (xp_str + xp_int + 1)
+                        if (xp_str+xp_int) > 0 else 0))
+    with c3:
+        if st.button("Sair"):
+            st.session_state["autenticado"] = False
+            st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    st.divider()
+    # --- TABS ---
+    nav = st.radio("", ["📜 Atributos", "⚔️ Grimório", "📚 Biblioteca"],
+                   horizontal=True, label_visibility="collapsed")
 
-    # --- FUNÇÃO GERAR PDF ---
-    def gerar_pdf(df):
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", 'B', 16)
-        pdf.cell(
-            200, 10, f"FICHA DE PERSONAGEM - {user_atual}", ln=True, align='C')
-        pdf.ln(10)
-        for treino in sorted(df['Treino'].unique()):
-            pdf.set_font("Arial", 'B', 12)
-            pdf.set_fill_color(200, 220, 255)
-            pdf.cell(0, 10, f" >> {treino}", ln=True, fill=True)
-            df_t = df[df['Treino'] == treino]
-            pdf.set_font("Arial", '', 10)
-            for _, row in df_t.iterrows():
-                linha = f"[ ] {row['Exercicio']} | {row['Series']}x{row['Reps']} | Carga: {row['KG']}kg"
-                pdf.cell(0, 8, linha, ln=True)
-            pdf.ln(4)
-        saida = pdf.output(dest='S')
-        return saida.encode('latin-1') if isinstance(saida, str) else bytes(saida)
+    # ==========================
+    # ABA 1: ATRIBUTOS
+    # ==========================
+    if nav == "📜 Atributos":
+        c1, c2 = st.columns([2, 1])
+        c1.subheader("Evolução Física")
 
-    # =========================================================================
-    # NAVEGAÇÃO
-    # =========================================================================
-
-    aba_selecionada = st.radio(
-        "",
-        ["📜 Atributos & Evolução", "⚔️ Grimório de Treino"],
-        horizontal=True,
-        label_visibility="collapsed"
-    )
-
-    # --- CONTEÚDO DA ABA 1: EVOLUÇÃO ---
-    if aba_selecionada == "📜 Atributos & Evolução":
-        c_kpi1, c_kpi2 = st.columns([2, 1])
-        c_kpi1.subheader("Atributos Corporais")
-
-        # Cooldown de 7 dias
-        xp_disponivel = True
-        dias_restantes = 0
-        hoje_dt = datetime.now()
-
-        if ultima_data_xp is not None:
-            diff = hoje_dt - ultima_data_xp
+        can_xp = True
+        days_left = 0
+        if last_dt:
+            diff = datetime.now() - last_dt
             if diff.days < 7:
-                xp_disponivel = False
-                dias_restantes = 7 - diff.days
+                can_xp, days_left = False, 7 - diff.days
 
-        # 1. Área de Registro
-        with st.expander("📝 Registrar Novo Status (Save Game)", expanded=False):
-            if xp_disponivel:
-                st.success("✨ Recompensa Semanal Disponível! (+150 XP)")
-                lbl_botao = "💾 Salvar e Ganhar XP"
+        with c2.expander("📝 Atualizar Peso", expanded=True):
+            if can_xp:
+                st.success("✨ XP Disponível!")
             else:
-                st.info(
-                    f"⏳ XP em recarga. Próxima recompensa em {dias_restantes} dias. (Você pode atualizar sem XP)")
-                lbl_botao = "💾 Atualizar Dados (Sem XP)"
-
-            with st.form("entrada_dados", clear_on_submit=True):
-                col1, col2 = st.columns(2)
-                peso = col1.number_input("Peso (kg)", 30.0, 200.0, 70.0)
-                altura = col2.number_input("Altura (m)", 1.0, 2.5, 1.75)
-
-                if st.form_submit_button(lbl_botao):
-                    novo = pd.DataFrame([{
-                        "Usuario": user_atual,
-                        "Data": datetime.now().strftime("%d/%m/%Y"),
-                        "Peso": peso,
-                        "Altura": altura,
-                        "IMC": round(peso/(altura**2), 2)
-                    }])
-                    updated_corpo = pd.concat([df_corpo_total, novo])
-                    conn.update(worksheet="evolucao", data=updated_corpo)
+                st.caption(f"⏳ XP em {days_left} dias")
+            with st.form("att_peso"):
+                p = st.number_input("Peso (kg)", 30.0, 200.0, 70.0)
+                a = st.number_input("Altura (m)", 1.0, 2.5, 1.75)
+                if st.form_submit_button("Salvar"):
+                    new = pd.DataFrame([{"Usuario": user, "Data": datetime.now().strftime(
+                        "%d/%m/%Y"), "Peso": p, "Altura": a, "IMC": round(p/(a**2), 2)}])
+                    conn.update(worksheet="evolucao",
+                                data=pd.concat([df_evol_tot, new]))
                     st.cache_data.clear()
-
-                    if xp_disponivel:
-                        st.toast("Marco alcançado! +150 XP!", icon="🎉")
-                    else:
-                        st.toast("Dados atualizados!", icon="📝")
+                    st.toast("Salvo!", icon="✅")
                     time.sleep(1)
                     st.rerun()
 
-        # 2. Editor de Histórico
-        with st.expander("✏️ Corrigir Histórico de Peso", expanded=False):
-            st.caption(
-                "Edite valores errados ou exclua linhas selecionando e apertando 'Del'.")
+        if not df_f.empty:
+            df_chart = df_f.copy()
+            df_chart['Date'] = pd.to_datetime(
+                df_chart['Data'], dayfirst=True, errors='coerce')
+            chart = alt.Chart(df_chart).mark_area(
+                line={'color': '#00f2ff'},
+                color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(
+                    color='#00f2ff', offset=0), alt.GradientStop(color='rgba(0,0,0,0)', offset=1)], x1=1, x2=1, y1=1, y2=0)
+            ).encode(x='Date:T', y=alt.Y('Peso:Q', scale=alt.Scale(zero=False))).properties(height=300)
+            st.altair_chart(chart, use_container_width=True)
 
-            df_editavel = st.data_editor(
-                df_f,
-                num_rows="dynamic",
-                use_container_width=True,
-                column_config={
-                    "Data": st.column_config.TextColumn("Data", disabled=False),
-                    "Peso": st.column_config.NumberColumn("Peso (kg)", format="%.1f"),
-                    "Altura": st.column_config.NumberColumn("Altura (m)", format="%.2f"),
-                    "IMC": st.column_config.NumberColumn("IMC", disabled=True)
-                },
-                key="editor_evolucao"
-            )
+    # ==========================
+    # ABA 2: GRIMÓRIO (TREINO)
+    # ==========================
+    elif nav == "⚔️ Grimório":
+        c1, c2 = st.columns([3, 1])
+        c1.subheader("Rotina de Batalha")
+        hoje = datetime.now().strftime("%d/%m/%Y")
 
-            if st.button("💾 Salvar Correções no Histórico"):
-                try:
-                    df_editavel["IMC"] = df_editavel.apply(
-                        lambda x: round(x["Peso"]/(x["Altura"]**2), 2), axis=1)
-                except:
-                    pass
-
-                df_outros_users = df_corpo_total[df_corpo_total['Usuario'] != user_atual]
-                df_final = pd.concat([df_outros_users, df_editavel])
-
-                conn.update(worksheet="evolucao", data=df_final)
+        if not df_c.empty and hoje in df_c['Data'].values:
+            c2.success("✅ Check-in feito!")
+        else:
+            if c2.button("🔥 Check-in (+25 XP)"):
+                conn.update(worksheet="checkins", data=pd.concat(
+                    [df_check_tot, pd.DataFrame([{"Usuario": user, "Data": hoje}])]))
                 st.cache_data.clear()
-                st.toast("Histórico corrigido!", icon="✅")
-                time.sleep(1)
                 st.rerun()
 
-        # 3. Visualização (GRÁFICO ALTAIR)
-        if not df_f.empty:
-            try:
-                p_ini = float(str(df_f['Peso'].iloc[0]).replace(',', '.'))
-                p_at = float(str(df_f['Peso'].iloc[-1]).replace(',', '.'))
-                imc_raw = df_f['IMC'].iloc[-1]
-                imc_atual = float(str(imc_raw).replace(',', '.'))
-            except:
-                p_ini, p_at, imc_atual = 0.0, 0.0, 0.0
-            evol = p_at - p_ini
-
-            if imc_atual < 18.5:
-                status, icon = "Buff de Agilidade", "⚠️"
-            elif imc_atual < 25:
-                status, icon = "Balanceado", "✅"
-            elif imc_atual < 30:
-                status, icon = "Tank", "🛡️"
-            else:
-                status, icon = "Heavy Tank", "🚨"
-
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Peso Inicial", f"{p_ini}kg")
-            m2.metric("Peso Atual", f"{p_at}kg", delta=f"{evol:.1f}kg")
-            m3.metric("Build Atual (IMC)",
-                      f"{imc_atual:.2f}", delta=f"{icon} {status}", delta_color="off")
-
-            # GRÁFICO
-            st.markdown("### 📊 Gráfico de Evolução")
-            df_chart = df_f.copy()
-            df_chart['Data_dt'] = pd.to_datetime(
-                df_chart['Data'], dayfirst=True, errors='coerce')
-
-            base = alt.Chart(df_chart).encode(
-                x=alt.X('Data_dt:T', title='Data',
-                        axis=alt.Axis(format='%d/%m/%Y')),
-                tooltip=[
-                    alt.Tooltip('Data', title='Data Registro'),
-                    alt.Tooltip('Peso', title='Peso (kg)'),
-                    alt.Tooltip('IMC', title='IMC')
-                ]
-            ).properties(height=350)
-
-            area = base.mark_area(
-                line={'color': '#6A0DAD'},
-                color=alt.Gradient(
-                    gradient='linear',
-                    stops=[alt.GradientStop(color='#6A0DAD', offset=0),
-                           alt.GradientStop(color='rgba(106, 13, 173, 0.1)', offset=1)],
-                    x1=1, x2=1, y1=1, y2=0
-                )
-            ).encode(y=alt.Y('Peso:Q', title='Peso (kg)', scale=alt.Scale(zero=False)))
-
-            points = base.mark_circle(
-                size=80, color='#00ffca').encode(y='Peso:Q')
-
-            chart_final = (area + points).interactive()
-            st.altair_chart(chart_final, use_container_width=True)
-        else:
-            st.info(
-                "Sua jornada começa agora. Registre seu peso acima para ganhar XP!")
-
-    # --- CONTEÚDO DA ABA 2: TREINOS ---
-    elif aba_selecionada == "⚔️ Grimório de Treino":
-
-        # --- SUB-SEÇÃO: CHECK-IN ---
-        col_check1, col_check2 = st.columns([3, 1])
-        with col_check1:
-            st.markdown("### 📅 Registro de Atividade")
-            hoje_str = datetime.now().strftime("%d/%m/%Y")
-            checkin_feito = False
-            if not df_c_user.empty and hoje_str in df_c_user['Data'].values:
-                checkin_feito = True
-
-            if checkin_feito:
-                st.success(
-                    f"✅ Treino de hoje ({hoje_str}) registrado! +25 XP ganhos.")
-            else:
-                st.warning("⚠️ Você ainda não registrou seu treino hoje.")
-                if st.button("🔥 Confirmar Treino do Dia (+25 XP)"):
-                    novo_checkin = pd.DataFrame(
-                        [{"Usuario": user_atual, "Data": hoje_str}])
-                    updated_checkins = pd.concat(
-                        [df_checkins_total, novo_checkin])
-                    conn.update(worksheet="checkins", data=updated_checkins)
-                    st.cache_data.clear()
-                    st.toast("Check-in realizado! +25 XP!", icon="🎉")
-                    time.sleep(1)
-                    st.rerun()
-
-        with col_check2:
-            dias_treinados = len(df_c_user)
-            st.metric("Dias Treinados", dias_treinados, delta="Total")
-
-        if not df_c_user.empty:
-            with st.expander("📆 Ver Histórico de Datas"):
-                st.dataframe(df_c_user[['Data']].sort_values(
-                    by='Data', ascending=False), use_container_width=True, hide_index=True)
-
         st.divider()
 
-        # =====================================================================
-        # === 📅 ÁREA DA AGENDA SEMANAL (CALENDÁRIO VISUAL) ===
-        # =====================================================================
-        st.subheader("📅 Cronograma Semanal")
+        # Calendário
+        days = ['Segunda', 'Terca', 'Quarta',
+                'Quinta', 'Sexta', 'Sabado', 'Domingo']
+        routine = {d: "DESCANSO" for d in days}
+        if not df_a.empty:
+            for d in days:
+                if d in df_a.columns:
+                    routine[d] = df_a[d].iloc[0]
 
-        col_ag1, col_ag2 = st.columns([3, 1])
-        col_ag1.caption(
-            "Defina sua rotina. O calendário abaixo se atualizará automaticamente.")
-        col_ag2.metric("Poder de Combate", f"{int(volume_total)} kg")
+        cols = st.columns(7)
+        short_days = ['SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB', 'DOM']
 
-        # 1. Visualização do Calendário (Estilo Tabela Neon Suavizada)
-        # Prepara dados padrão se não houver agenda
-        dias_semana = ['Segunda', 'Terca', 'Quarta',
-                       'Quinta', 'Sexta', 'Sabado', 'Domingo']
-
-        rotina_display = {d: "DESCANSO" for d in dias_semana}
-        if not df_a_user.empty:
-            for d in dias_semana:
-                if d in df_a_user.columns:
-                    rotina_display[d] = df_a_user[d].iloc[0]
-
-        cols_cal = st.columns(7)
-        dias_display = {'Segunda': 'Seg', 'Terca': 'Ter', 'Quarta': 'Qua',
-                        'Quinta': 'Qui', 'Sexta': 'Sex', 'Sabado': 'Sáb', 'Domingo': 'Dom'}
-
-        for i, dia_key in enumerate(dias_semana):
-            treino_dia = rotina_display[dia_key]
-            cor_fundo = get_neon_color(treino_dia)
-
-            with cols_cal[i]:
-                # Cabeçalho com brilho neon reduzido (sem inset shadow forte)
+        for i, d in enumerate(days):
+            t = routine[d]
+            color = get_neon_color(t)
+            with cols[i]:
                 st.markdown(
-                    f"""<div class='day-header' style='background-color: {cor_fundo}; box-shadow: 0 0 10px {cor_fundo};'>{dias_display[dia_key]}</div>""",
-                    unsafe_allow_html=True
-                )
+                    f"<div class='cal-day' style='background:{color}; box-shadow:0 0 8px {color};'>{short_days[i]}</div>", unsafe_allow_html=True)
+                html = f"<strong>{t}</strong><hr style='margin:5px 0; border-color:#ffffff20'>" if t != "DESCANSO" else "<div style='text-align:center; padding-top:20px; color:#555'>Descanso</div>"
+                if t != "DESCANSO":
+                    exs = df_t[df_t['Treino'] == t]
+                    for _, r in exs.iterrows():
+                        html += f"<div style='font-size:0.9em; margin-bottom:3px'>• {r['Exercicio']} <span style='color:#aaa'>({int(r['Series'])}x{int(r['Reps'])})</span></div>"
+                st.markdown(
+                    f"<div class='cal-body'>{html}</div>", unsafe_allow_html=True)
 
-                conteudo_html = ""
-                if treino_dia != "DESCANSO":
-                    conteudo_html += f"<strong>{treino_dia}</strong><br><hr style='margin:5px 0; border-color: rgba(255,255,255,0.1)'>"
-                    treino_detalhes = df_t_user[df_t_user['Treino'] == treino_dia][[
-                        'Exercicio', 'Series', 'Reps']]
+        with st.expander("⚙️ Editar Rotina"):
+            with st.form("edit_rotina"):
+                cols_f = st.columns(7)
+                opts = ["DESCANSO"] + sorted(df_t['Treino'].unique().tolist())
+                new_rot = {}
+                for i, d in enumerate(days):
+                    idx = opts.index(routine[d]) if routine[d] in opts else 0
+                    new_rot[d] = cols_f[i].selectbox(d[:3], opts, index=idx)
+                if st.form_submit_button("Salvar"):
+                    clean = df_agenda_tot[df_agenda_tot['Usuario'] != user]
+                    new_rot['Usuario'] = user
+                    conn.update(worksheet="agenda", data=pd.concat(
+                        [clean, pd.DataFrame([new_rot])]))
+                    st.cache_data.clear()
+                    st.rerun()
 
-                    if not treino_detalhes.empty:
-                        for _, row in treino_detalhes.iterrows():
-                            conteudo_html += f"<div style='margin-bottom:4px; line-height:1.2'><small>• {row['Exercicio']}<br><span style='color:#aaa'>({int(row['Series'])}x{int(row['Reps'])})</span></small></div>"
+        st.divider()
+        with st.expander("🛠️ Editor de Exercícios"):
+            with st.form("edit_ex"):
+                edited = st.data_editor(
+                    df_t.drop(columns=['Usuario']), num_rows="dynamic", use_container_width=True)
+                if st.form_submit_button("Salvar Alterações"):
+                    edited['Usuario'] = user
+                    clean = df_treinos_tot[df_treinos_tot['Usuario'] != user]
+                    conn.update(worksheet="treinos",
+                                data=pd.concat([clean, edited]))
+                    st.cache_data.clear()
+                    st.toast("Treinos salvos!", icon="⚔️")
+                    time.sleep(1)
+                    st.rerun()
+            if not df_t.empty:
+                st.download_button("📜 PDF", data=gerar_pdf(
+                    df_t, user), file_name="treino.pdf")
+
+    # ==========================
+    # ABA 3: BIBLIOTECA (MAGE)
+    # ==========================
+    elif nav == "📚 Biblioteca":
+        c1, c2 = st.columns([3, 1])
+        c1.subheader("Biblioteca Arcana")
+        c2.metric("Inteligência (MP)", f"{xp_int} XP")
+
+        col_L, col_R = st.columns([1, 1])
+
+        with col_L:
+            st.markdown("""
+            <div style="background:rgba(183, 0, 255, 0.1); padding:15px; border-radius:10px; border:1px solid #b700ff; margin-bottom:15px;">
+                <h4 style="margin:0; color:#e0b0ff">✨ Conjurar Sabedoria</h4>
+                <small style="color:#aaa">Livro (5XP/3pág) | Mangá (2XP/3pág) | Estudos (50XP/h)</small>
+            </div>
+            """, unsafe_allow_html=True)
+
+            with st.form("study_form", clear_on_submit=True):
+                name = st.text_input(
+                    "Nome do Tomo", placeholder="Ex: O Hobbit, Python...")
+                # OPÇÕES ATUALIZADAS
+                tipo = st.radio(
+                    "Tipo", ["Livro", "Mangá/HQ", "Estudos"], horizontal=False)
+                qtd = st.number_input(
+                    "Qtd (Páginas/Horas)", min_value=1, step=1)
+
+                if st.form_submit_button("Registrar", type="primary"):
+                    if name:
+                        # Mapeamento do nome visual para o nome salvo no banco
+                        real_type = tipo
+                        if tipo == "Mangá/HQ":
+                            real_type = "Mangá"
+
+                        new_row = pd.DataFrame([{"Usuario": user, "Data": datetime.now().strftime(
+                            "%d/%m/%Y"), "Assunto": name, "Qtd": qtd, "Tipo": real_type}])
+                        conn.update(worksheet="estudos", data=pd.concat(
+                            [df_estudos_tot, new_row]))
+                        st.cache_data.clear()
+
+                        gain = 0
+                        if real_type == 'Livro':
+                            gain = int(qtd*(5/3))
+                        elif real_type in ['Mangá', 'HQ']:
+                            gain = int(qtd*(2/3))
+                        else:
+                            gain = qtd*50
+
+                        st.toast(f"+{gain} MP ganho!", icon="🔮")
+                        time.sleep(1)
+                        st.rerun()
                     else:
-                        conteudo_html += "<small>Vazio</small>"
-                else:
-                    # Emoji removido, apenas texto discreto ou vazio
-                    conteudo_html += "<div style='text-align:center; padding-top:20px; color: #555'>Descanso</div>"
+                        st.warning("Nome obrigatório")
 
-                st.markdown(
-                    f"<div class='day-body'>{conteudo_html}</div>", unsafe_allow_html=True)
+        with col_R:
+            st.caption("📜 Pergaminhos Recentes")
+            if not df_e.empty:
+                recents = df_e.iloc[::-1].head(4)
+                for _, row in recents.iterrows():
+                    t = row['Tipo']
+                    # TAG ATUALIZADA
+                    if t in ['Estudos', 'Curso']:
+                        tag_cls = "tag-estudos"
+                        unit = "h"
+                    elif t in ['Mangá', 'HQ']:
+                        tag_cls = "tag-hq"
+                        unit = "pág"
+                    else:
+                        tag_cls = "tag-livro"
+                        unit = "pág"
 
-        # 2. Configuração da Agenda (EMBAIXO)
-        with st.expander("⚙️ Editar Rotina Semanal", expanded=False):
-            opcoes_treino_agenda = ["DESCANSO"] + \
-                sorted(df_t_user['Treino'].unique().tolist())
-
-            with st.form("form_agenda"):
-                cols_cfg = st.columns(7)
-                selecoes = {}
-                for i, dia in enumerate(dias_semana):
-                    with cols_cfg[i]:
-                        val_atual = rotina_display[dia]
-                        idx = opcoes_treino_agenda.index(
-                            val_atual) if val_atual in opcoes_treino_agenda else 0
-                        selecoes[dia] = st.selectbox(
-                            dia[:3], options=opcoes_treino_agenda, index=idx)
-
-                if st.form_submit_button("💾 Salvar Rotina"):
-                    selecoes['Usuario'] = user_atual
-                    novo_reg_agenda = pd.DataFrame([selecoes])
-                    df_agenda_limpa = df_agenda_total[df_agenda_total['Usuario'] != user_atual]
-                    updated_agenda = pd.concat(
-                        [df_agenda_limpa, novo_reg_agenda])
-
-                    conn.update(worksheet="agenda", data=updated_agenda)
-                    st.cache_data.clear()
-                    st.toast("Rotina atualizada!", icon="✅")
-                    time.sleep(1)
-                    st.rerun()
-
-        st.divider()
-
-        # --- EDITOR DE TREINOS ---
-        with st.expander("🛠️ Forjar/Alterar Equipamentos (Exercícios)", expanded=False):
-            with st.form("form_editor_treino"):
-                st.caption(
-                    "Edite à vontade. O sistema só atualizará quando clicar em 'Salvar Alterações'.")
-                df_ed = st.data_editor(
-                    df_t_user.drop(columns=["Usuario"]),
-                    use_container_width=True,
-                    num_rows="dynamic",
-                    column_config={
-                        "Treino": st.column_config.SelectboxColumn(
-                            "Missão",
-                            options=["TREINO A", "TREINO B", "TREINO C",
-                                     "TREINO D", "TREINO E", "CARDIO"],
-                            required=True
-                        ),
-                        "Exercicio": st.column_config.TextColumn("Habilidade", required=True),
-                        "Series": st.column_config.NumberColumn("Sets", min_value=1, max_value=20, format="%d"),
-                        "Reps": st.column_config.NumberColumn("Reps", min_value=1, max_value=100, format="%d"),
-                        "KG": st.column_config.NumberColumn("Carga (kg)", min_value=0, step=0.5, format="%.1f kg"),
-                    },
-                    key="editor_treino"
-                )
-                c_submit, _ = st.columns([1, 2])
-                submit_btn = c_submit.form_submit_button(
-                    "💾 Salvar Alterações", type="primary")
-
-                if submit_btn:
-                    df_ed["Usuario"] = user_atual
-                    df_outros = df_treinos_total[df_treinos_total['Usuario']
-                                                 != user_atual]
-                    updated_treinos = pd.concat([df_outros, df_ed])
-                    conn.update(worksheet="treinos", data=updated_treinos)
-                    st.cache_data.clear()
-                    st.toast("Grimório atualizado!", icon="✨")
-                    time.sleep(1)
-                    st.rerun()
-
-            if not df_t_user.empty:
-                st.download_button("📜 Baixar Ficha (PDF)", data=gerar_pdf(
-                    df_t_user), file_name="ficha_rpg.pdf", mime="application/pdf")
-
-        # --- VISUALIZAÇÃO GERAL DOS TREINOS (ESTILO NEON CARD SUAVIZADO) ---
-        st.divider()
-        st.subheader("📋 Visualização da Ficha Completa")
-
-        if not df_t_user.empty:
-            treinos_unicos = sorted(df_t_user['Treino'].unique())
-            if len(treinos_unicos) <= 3:
-                cols = st.columns(len(treinos_unicos))
-            else:
-                cols = [st.container() for _ in range(len(treinos_unicos))]
-
-            for i, treino in enumerate(treinos_unicos):
-                df_subset = df_t_user[df_t_user['Treino'] == treino].drop(
-                    columns=['Usuario', 'Treino'])
-                df_display = df_subset.copy()
-                df_display['Series'] = df_display['Series'].apply(
-                    lambda x: f"{int(x)}")
-                df_display['Reps'] = df_display['Reps'].apply(
-                    lambda x: f"{int(x)}")
-                df_display['KG'] = df_display['KG'].apply(lambda x: f"{x} kg")
-
-                cor_header = get_neon_color(treino)
-
-                container_usado = cols[i]
-
-                with container_usado:
-                    # ESTILO CARD (Sombra reduzida)
                     st.markdown(f"""
-                        <div style="
-                            border: 1px solid rgba(255,255,255,0.1);
-                            border-left: 5px solid {cor_header};
-                            box-shadow: -3px 0 10px {cor_header}, inset 0 0 5px rgba(0,0,0,0.5);
-                            background-color: rgba(255, 255, 255, 0.03);
-                            border-radius: 5px;
-                            padding: 10px;
-                            margin-bottom: 15px;
-                        ">
-                        <h4 style="margin: 0; padding-bottom: 10px; color: {cor_header}; text-shadow: 0 0 5px {cor_header};">{treino}</h4>
+                    <div class="mage-card">
+                        <div class="mage-title">{row['Assunto']}</div>
+                        <div class="mage-tags">
+                            <span class="tag {tag_cls}">{t}</span>
+                            <span>{int(row['Qtd'])}{unit}</span>
+                            <span class="mage-date">{row['Data']}</span>
+                        </div>
+                    </div>
                     """, unsafe_allow_html=True)
+            else:
+                st.info("O Grimório está vazio.")
 
-                    st.dataframe(
-                        df_display, use_container_width=True, hide_index=True)
+        st.divider()
+        k1, k2 = st.columns(2)
+        # MÉTRICAS CORRIGIDAS
+        k1.metric("Páginas Lidas", int(pags))
+        k2.metric("Horas Estudadas", int(horas))
 
-                    st.markdown("</div>", unsafe_allow_html=True)
-        else:
-            st.info("Grimório vazio.")
+        with st.expander("🛠️ Gerenciar Histórico"):
+            if not df_e.empty:
+                edited_e = st.data_editor(
+                    df_e.iloc[::-1], num_rows="dynamic", use_container_width=True)
+                if st.button("Salvar Correções"):
+                    clean = df_estudos_tot[df_estudos_tot['Usuario'] != user]
+                    conn.update(worksheet="estudos",
+                                data=pd.concat([clean, edited_e]))
+                    st.cache_data.clear()
+                    st.rerun()
