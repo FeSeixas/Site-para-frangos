@@ -145,10 +145,42 @@ def calcular_status_rpg(df_evolucao, volume_total, df_checkins):
 
     return nivel, total_xp, xp_atual_nivel, xp_proximo, titulo, icone, ultima_data_marco
 
+# --- FUNÇÃO AUXILIAR PARA CORES NEON ---
 
-# CSS Aprimorado
+
+def get_neon_color(treino_name):
+    # Cores Neon vibrantes definidas no CSS :root
+    if treino_name == "TREINO A":
+        return "var(--neon-a)"
+    if treino_name == "TREINO B":
+        return "var(--neon-b)"
+    if treino_name == "TREINO C":
+        return "var(--neon-c)"
+    if treino_name == "TREINO D":
+        return "var(--neon-d)"
+    if treino_name == "TREINO E":
+        return "var(--neon-e)"
+    if treino_name == "CARDIO":
+        return "var(--neon-cardio)"
+    if treino_name == "DESCANSO":
+        return "var(--neon-rest)"
+    return "#333"
+
+
+# CSS Aprimorado (COM NEON)
 st.markdown("""
     <style>
+    /* Definição das Cores Neon */
+    :root {
+        --neon-a: #00f2ff; /* Ciano Elétrico */
+        --neon-b: #ffea00; /* Amarelo Brilhante */
+        --neon-c: #39ff14; /* Verde Neon */
+        --neon-d: #ff5e00; /* Laranja Fogo */
+        --neon-e: #b700ff; /* Roxo Elétrico */
+        --neon-cardio: #ff00d4; /* Pink Neon */
+        --neon-rest: #ff0000; /* Vermelho Puro */
+    }
+
     .stApp { background-color: #0e1117; }
     [data-testid="stMetricValue"] { color: #00ffca !important; text-shadow: 0px 0px 10px rgba(0,255,202,0.5); font-family: 'Courier New', monospace; }
     .stMetric { background-color: rgba(20, 20, 40, 0.8); padding: 10px; border: 1px solid #4B0082; border-radius: 5px; box-shadow: 0 0 10px rgba(75, 0, 130, 0.2); }
@@ -166,6 +198,29 @@ st.markdown("""
         padding: 10px;
         border-radius: 10px;
     }
+    
+    /* Estilo do Calendário Visual */
+    .day-header {
+        font-weight: bold;
+        text-align: center;
+        padding: 8px;
+        border-radius: 5px 5px 0 0;
+        margin-bottom: 0px;
+        color: black; /* Texto preto para contraste no neon */
+        text-shadow: 0px 0px 2px rgba(255,255,255,0.6); /* Leve brilho branco no texto preto */
+        text-transform: uppercase;
+        font-size: 0.9em;
+        /* A box-shadow de brilho será aplicada inline no Python */
+    }
+    .day-body {
+        background-color: rgba(255,255,255,0.03);
+        padding: 10px;
+        border-radius: 0 0 5px 5px;
+        font-size: 0.8em;
+        min-height: 150px;
+        border: 1px solid rgba(255,255,255,0.05);
+        border-top: none;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -177,6 +232,7 @@ if verificar_senha():
     df_corpo_total = carregar_dados_direto("evolucao")
     df_treinos_total = carregar_dados_direto("treinos")
     df_checkins_total = carregar_dados_direto("checkins")
+    df_agenda_total = carregar_dados_direto("agenda")
 
     # Filtra dados do usuário
     df_f = df_corpo_total[df_corpo_total['Usuario'] == user_atual].copy()
@@ -188,6 +244,13 @@ if verificar_senha():
         )
     else:
         df_c_user = pd.DataFrame(columns=["Usuario", "Data"])
+
+    # Filtra Agenda do Usuário
+    if not df_agenda_total.empty:
+        df_a_user = df_agenda_total[df_agenda_total['Usuario']
+                                    == user_atual].copy()
+    else:
+        df_a_user = pd.DataFrame()
 
     # Cálculo preliminar de volume
     try:
@@ -244,10 +307,9 @@ if verificar_senha():
         return saida.encode('latin-1') if isinstance(saida, str) else bytes(saida)
 
     # =========================================================================
-    # SUBSTITUIÇÃO DAS ABAS POR NAVEGAÇÃO PERSISTENTE (RADIO)
+    # NAVEGAÇÃO
     # =========================================================================
 
-    # Menu de navegação que lembra onde você clicou
     aba_selecionada = st.radio(
         "",
         ["📜 Atributos & Evolução", "⚔️ Grimório de Treino"],
@@ -402,22 +464,16 @@ if verificar_senha():
 
     # --- CONTEÚDO DA ABA 2: TREINOS ---
     elif aba_selecionada == "⚔️ Grimório de Treino":
-        col_t1, col_t2 = st.columns([3, 1])
-        col_t1.subheader("⚔️ Grimório de Batalha (Ficha)")
-        col_t2.metric("Poder de Combate (Volume)", f"{int(volume_total)} kg")
 
-        # --- CHECK-IN DIÁRIO ---
-        st.divider()
-        hoje_str = datetime.now().strftime("%d/%m/%Y")
-
-        if not df_c_user.empty and hoje_str in df_c_user['Data'].values:
-            checkin_feito = True
-        else:
-            checkin_feito = False
-
+        # --- SUB-SEÇÃO: CHECK-IN ---
         col_check1, col_check2 = st.columns([3, 1])
         with col_check1:
             st.markdown("### 📅 Registro de Atividade")
+            hoje_str = datetime.now().strftime("%d/%m/%Y")
+            checkin_feito = False
+            if not df_c_user.empty and hoje_str in df_c_user['Data'].values:
+                checkin_feito = True
+
             if checkin_feito:
                 st.success(
                     f"✅ Treino de hoje ({hoje_str}) registrado! +25 XP ganhos.")
@@ -445,14 +501,99 @@ if verificar_senha():
 
         st.divider()
 
-        # --- EDITOR DE TREINOS COM PROTEÇÃO DE RELOAD (ST.FORM) ---
-        with st.expander("🛠️ Forjar/Alterar Equipamentos (Exercícios)", expanded=False):
+        # =====================================================================
+        # === 📅 ÁREA DA AGENDA SEMANAL (CALENDÁRIO VISUAL NEON) ===
+        # =====================================================================
+        st.subheader("📅 Cronograma Semanal")
 
-            # INICIO DO FORMULÁRIO (Evita reload a cada clique)
+        col_ag1, col_ag2 = st.columns([3, 1])
+        col_ag1.caption(
+            "Defina sua rotina. O calendário abaixo se atualizará automaticamente.")
+        col_ag2.metric("Poder de Combate", f"{int(volume_total)} kg")
+
+        # 1. Visualização do Calendário (Estilo Tabela Neon - AGORA SEMPRE VISÍVEL)
+        # Prepara dados padrão se não houver agenda
+        dias_semana = ['Segunda', 'Terca', 'Quarta',
+                       'Quinta', 'Sexta', 'Sabado', 'Domingo']
+
+        # Cria um dicionário com a rotina atual OU padrão "DESCANSO"
+        rotina_display = {d: "DESCANSO" for d in dias_semana}
+        if not df_a_user.empty:
+            for d in dias_semana:
+                if d in df_a_user.columns:
+                    rotina_display[d] = df_a_user[d].iloc[0]
+
+        cols_cal = st.columns(7)
+        dias_display = {'Segunda': 'Seg', 'Terca': 'Ter', 'Quarta': 'Qua',
+                        'Quinta': 'Qui', 'Sexta': 'Sex', 'Sabado': 'Sáb', 'Domingo': 'Dom'}
+
+        for i, dia_key in enumerate(dias_semana):
+            treino_dia = rotina_display[dia_key]
+            cor_fundo = get_neon_color(treino_dia)
+
+            with cols_cal[i]:
+                # Cabeçalho com brilho neon
+                st.markdown(
+                    f"""<div class='day-header' style='background-color: {cor_fundo}; box-shadow: 0 0 10px {cor_fundo}, 0 0 20px {cor_fundo} inset;'>{dias_display[dia_key]}</div>""",
+                    unsafe_allow_html=True
+                )
+
+                conteudo_html = ""
+                if treino_dia != "DESCANSO":
+                    conteudo_html += f"<strong>{treino_dia}</strong><br><hr style='margin:5px 0; border-color: rgba(255,255,255,0.1)'>"
+                    treino_detalhes = df_t_user[df_t_user['Treino'] == treino_dia][[
+                        'Exercicio', 'Series', 'Reps']]
+
+                    if not treino_detalhes.empty:
+                        for _, row in treino_detalhes.iterrows():
+                            conteudo_html += f"<div style='margin-bottom:4px; line-height:1.2'><small>• {row['Exercicio']}<br><span style='color:#aaa'>({int(row['Series'])}x{int(row['Reps'])})</span></small></div>"
+                    else:
+                        conteudo_html += "<small>Vazio</small>"
+                else:
+                    conteudo_html += "<div style='text-align:center; padding-top:20px; color: #666'>💤</div>"
+
+                st.markdown(
+                    f"<div class='day-body'>{conteudo_html}</div>", unsafe_allow_html=True)
+
+        # 2. Configuração da Agenda (MOVIDO PARA BAIXO)
+        with st.expander("⚙️ Editar Rotina Semanal", expanded=False):
+            opcoes_treino_agenda = ["DESCANSO"] + \
+                sorted(df_t_user['Treino'].unique().tolist())
+
+            with st.form("form_agenda"):
+                cols_cfg = st.columns(7)
+                selecoes = {}
+                for i, dia in enumerate(dias_semana):
+                    with cols_cfg[i]:
+                        # Valor atual selecionado
+                        val_atual = rotina_display[dia]
+                        # Garante que o valor atual existe na lista de opções (evita erro se um treino for deletado)
+                        idx = opcoes_treino_agenda.index(
+                            val_atual) if val_atual in opcoes_treino_agenda else 0
+
+                        selecoes[dia] = st.selectbox(
+                            dia[:3], options=opcoes_treino_agenda, index=idx)
+
+                if st.form_submit_button("💾 Salvar Rotina"):
+                    selecoes['Usuario'] = user_atual
+                    novo_reg_agenda = pd.DataFrame([selecoes])
+                    df_agenda_limpa = df_agenda_total[df_agenda_total['Usuario'] != user_atual]
+                    updated_agenda = pd.concat(
+                        [df_agenda_limpa, novo_reg_agenda])
+
+                    conn.update(worksheet="agenda", data=updated_agenda)
+                    st.cache_data.clear()
+                    st.toast("Rotina atualizada!", icon="✅")
+                    time.sleep(1)
+                    st.rerun()
+
+        st.divider()
+
+        # --- EDITOR DE TREINOS ---
+        with st.expander("🛠️ Forjar/Alterar Equipamentos (Exercícios)", expanded=False):
             with st.form("form_editor_treino"):
                 st.caption(
                     "Edite à vontade. O sistema só atualizará quando clicar em 'Salvar Alterações'.")
-
                 df_ed = st.data_editor(
                     df_t_user.drop(columns=["Usuario"]),
                     use_container_width=True,
@@ -460,14 +601,8 @@ if verificar_senha():
                     column_config={
                         "Treino": st.column_config.SelectboxColumn(
                             "Missão",
-                            options=[
-                                "TREINO A",
-                                "TREINO B",
-                                "TREINO C",
-                                "TREINO D",
-                                "TREINO E",
-                                "CARDIO"
-                            ],
+                            options=["TREINO A", "TREINO B", "TREINO C",
+                                     "TREINO D", "TREINO E", "CARDIO"],
                             required=True
                         ),
                         "Exercicio": st.column_config.TextColumn("Habilidade", required=True),
@@ -477,8 +612,6 @@ if verificar_senha():
                     },
                     key="editor_treino"
                 )
-
-                # Botão de submit dentro do form
                 c_submit, _ = st.columns([1, 2])
                 submit_btn = c_submit.form_submit_button(
                     "💾 Salvar Alterações", type="primary")
@@ -494,16 +627,21 @@ if verificar_senha():
                     time.sleep(1)
                     st.rerun()
 
-            # PDF fora do form
             if not df_t_user.empty:
                 st.download_button("📜 Baixar Ficha (PDF)", data=gerar_pdf(
                     df_t_user), file_name="ficha_rpg.pdf", mime="application/pdf")
 
+        # --- VISUALIZAÇÃO GERAL DOS TREINOS (ESTILO NEON CARD) ---
         st.divider()
+        st.subheader("📋 Visualização da Ficha Completa")
+
         if not df_t_user.empty:
             treinos_unicos = sorted(df_t_user['Treino'].unique())
-            cols = st.columns(len(treinos_unicos)) if len(
-                treinos_unicos) > 0 else [st.container()]
+            if len(treinos_unicos) <= 3:
+                cols = st.columns(len(treinos_unicos))
+            else:
+                cols = [st.container() for _ in range(len(treinos_unicos))]
+
             for i, treino in enumerate(treinos_unicos):
                 df_subset = df_t_user[df_t_user['Treino'] == treino].drop(
                     columns=['Usuario', 'Treino'])
@@ -513,9 +651,31 @@ if verificar_senha():
                 df_display['Reps'] = df_display['Reps'].apply(
                     lambda x: f"{int(x)}")
                 df_display['KG'] = df_display['KG'].apply(lambda x: f"{x} kg")
-                with cols[i] if len(treinos_unicos) <= 3 else st.container():
-                    st.markdown(f"#### 🛡️ {treino}")
+
+                # Pega a cor neon
+                cor_header = get_neon_color(treino)
+
+                container_usado = cols[i]
+
+                with container_usado:
+                    # ESTILO NEON CARD (Borda brilhante e Título brilhante)
+                    st.markdown(f"""
+                        <div style="
+                            border: 1px solid rgba(255,255,255,0.1);
+                            border-left: 5px solid {cor_header};
+                            /* Adiciona o brilho neon na borda esquerda */
+                            box-shadow: -3px 0 15px {cor_header}, inset 0 0 10px rgba(0,0,0,0.5);
+                            background-color: rgba(255, 255, 255, 0.03);
+                            border-radius: 5px;
+                            padding: 10px;
+                            margin-bottom: 15px;
+                        ">
+                        <h4 style="margin: 0; padding-bottom: 10px; color: {cor_header}; text-shadow: 0 0 8px {cor_header};">{treino}</h4>
+                    """, unsafe_allow_html=True)
+
                     st.dataframe(
                         df_display, use_container_width=True, hide_index=True)
+
+                    st.markdown("</div>", unsafe_allow_html=True)
         else:
             st.info("Grimório vazio.")
