@@ -53,9 +53,14 @@ def verificar_senha():
                     st.success("Conta criada! Vá para a aba Entrar.")
 
         with aba_login:
-            user = st.text_input("Usuário", key="log_u")
-            senha = st.text_input("Senha", type="password", key="log_p")
-            if st.button("Entrar"):
+            # --- CORREÇÃO AQUI: USANDO st.form ---
+            with st.form("login_form"):
+                user = st.text_input("Usuário", key="log_u")
+                senha = st.text_input("Senha", type="password", key="log_p")
+                # O botão deve ser st.form_submit_button dentro do form
+                submit_login = st.form_submit_button("Entrar")
+
+            if submit_login:
                 try:
                     df_users = carregar_dados_direto("usuarios")
                     # AJUSTE: Convertemos as senhas da planilha para texto antes de comparar
