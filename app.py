@@ -15,10 +15,13 @@ st.set_page_config(page_title="Life RPG", page_icon="🐉", layout="wide")
 @st.cache_data(ttl=5)
 def carregar_dados_direto(aba):
     try:
-        # Substitua pelo ID da sua planilha se necessário
         spreadsheet_id = "1c7NZQWQv_gV9KFvSnFN8tQpUzJqpj8zEu_35aqTUWHg"
         url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/gviz/tq?tqx=out:csv&sheet={aba}"
-        return pd.read_csv(url)
+        df = pd.read_csv(url)
+        # Garante que a coluna Tag existe para compatibilidade
+        if aba == "estudos" and "Tag" not in df.columns:
+            df["Tag"] = "XP"
+        return df
     except:
         return pd.DataFrame()
 
@@ -87,48 +90,56 @@ def calcular_status_rpg(df_evolucao, volume_total, df_checkins, df_estudos):
 
     # 2. INTELIGÊNCIA (INT)
     xp_int = 0
-    pags = 0
+    pags_livro = 0
+    caps_manga = 0
     horas = 0
-    if not df_estudos.empty:
-        # Garante que Qtd é número
-        df_estudos['Qtd'] = pd.to_numeric(
-            df_estudos['Qtd'], errors='coerce').fillna(0)
+    eps_anime = 0
 
-        for _, row in df_estudos.iterrows():
+    if not df_estudos.empty:
+        if 'Tag' not in df_estudos.columns:
+            df_estudos['Tag'] = 'XP'
+
+        # Só conta XP se Tag for 'XP'
+        df_ativo = df_estudos[df_estudos['Tag'] == 'XP'].copy()
+        df_ativo['Qtd'] = pd.to_numeric(
+            df_ativo['Qtd'], errors='coerce').fillna(0)
+
+        for _, row in df_ativo.iterrows():
             t = row['Tipo']
             q = row['Qtd']
 
             if t == 'Livro':
-                # NOVA LÓGICA: 5 XP a cada 3 páginas
                 xp_int += int(q * (5/3))
-                pags += q
+                pags_livro += q
             elif t in ['Mangá', 'HQ']:
-                # NOVA LÓGICA: 2 XP a cada 3 páginas
-                xp_int += int(q * (2/3))
-                pags += q
+                # XP por CAPÍTULO
+                xp_int += int(q * 2)
+                caps_manga += q
             elif t in ['Estudos', 'Curso']:
                 xp_int += int(q * 50)
                 horas += q
+            elif t == 'Anime':
+                xp_int += int(q * 15)
+                eps_anime += q
 
     # 3. GLOBAL
     xp_total = xp_str + int(xp_int)
     nivel = 1 + int(xp_total / 1000)
 
-    # Títulos e Ícones (Emojis Seguros)
     if nivel < 5:
-        titulo, icone = "Novato", "🌱"       # Broto
+        titulo, icone = "Novato", "🌱"
     elif nivel < 10:
-        titulo, icone = "Aprendiz", "⚔️"    # Espadas
+        titulo, icone = "Aprendiz", "⚔️"
     elif nivel < 20:
-        titulo, icone = "Guerreiro", "🛡️"   # Escudo
+        titulo, icone = "Guerreiro", "🛡️"
     elif nivel < 40:
-        titulo, icone = "Veterano", "🦁"    # Leão
+        titulo, icone = "Veterano", "🦁"
     elif nivel < 60:
-        titulo, icone = "Mestre", "👑"      # Coroa
+        titulo, icone = "Mestre", "👑"
     else:
-        titulo, icone = "Lenda", "🐉"                # Dragão
+        titulo, icone = "Lenda", "🐉"
 
-    return nivel, xp_total, xp_total % 1000, 1000, titulo, icone, ultima_data, xp_str, int(xp_int), pags, horas
+    return nivel, xp_total, xp_total % 1000, 1000, titulo, icone, ultima_data, xp_str, int(xp_int), pags_livro, caps_manga, horas, eps_anime
 
 # --- LOGIN ---
 
@@ -218,6 +229,7 @@ div[data-testid="stRadio"] > div {
 .tag-livro { background: #00f2ff; }
 .tag-hq { background: #ff00d4; color: white; }
 .tag-estudos { background: #ffea00; } 
+.tag-anime { background: #ff0000; color: white; }
 .mage-date { margin-left: auto; color: #888; font-size: 0.75em; }
 
 /* CALENDÁRIO */
@@ -243,7 +255,6 @@ if verificar_senha():
     df_f = df_evol_tot[df_evol_tot['Usuario'] == user].copy()
     df_t = df_treinos_tot[df_treinos_tot['Usuario'] == user].copy()
 
-    # Tratamento seguro se vazio
     if not df_check_tot.empty:
         df_c = df_check_tot[df_check_tot['Usuario'] == user].copy()
     else:
@@ -256,9 +267,11 @@ if verificar_senha():
 
     if not df_estudos_tot.empty:
         df_e = df_estudos_tot[df_estudos_tot['Usuario'] == user].copy()
+        if 'Tag' not in df_e.columns:
+            df_e['Tag'] = 'XP'
     else:
         df_e = pd.DataFrame(
-            columns=["Usuario", "Data", "Assunto", "Qtd", "Tipo"])
+            columns=["Usuario", "Data", "Assunto", "Qtd", "Tipo", "Tag"])
 
     # CALCULAR VOLUME
     vol = 0
@@ -270,8 +283,8 @@ if verificar_senha():
     except:
         pass
 
-    # --- CALCULAR RPG (COM PAGS E HORAS) ---
-    nivel, total_xp, xp_curr, xp_next, title, icon, last_dt, xp_str, xp_int, pags, horas = calcular_status_rpg(
+    # --- CALCULAR RPG ---
+    nivel, total_xp, xp_curr, xp_next, title, icon, last_dt, xp_str, xp_int, pags_livro, caps_manga, horas, eps_anime = calcular_status_rpg(
         df_f, vol, df_c, df_e)
 
     # --- HUD ---
@@ -340,12 +353,58 @@ if verificar_senha():
             df_chart = df_f.copy()
             df_chart['Date'] = pd.to_datetime(
                 df_chart['Data'], dayfirst=True, errors='coerce')
-            chart = alt.Chart(df_chart).mark_area(
-                line={'color': '#00f2ff'},
-                color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(
-                    color='#00f2ff', offset=0), alt.GradientStop(color='rgba(0,0,0,0)', offset=1)], x1=1, x2=1, y1=1, y2=0)
-            ).encode(x='Date:T', y=alt.Y('Peso:Q', scale=alt.Scale(zero=False))).properties(height=300)
-            st.altair_chart(chart, use_container_width=True)
+
+            # --- NOVO GRÁFICO ALTAIR ESTILIZADO ---
+
+            # Interação (Crosshair)
+            nearest = alt.selection_point(
+                nearest=True, on='mouseover', fields=['Date'], empty=False)
+
+            # 1. Linha (Neon)
+            line = alt.Chart(df_chart).mark_line(
+                interpolate='monotone',  # Curvas suaves
+                color='#00f2ff',
+                strokeWidth=3
+            ).encode(
+                x=alt.X('Date:T', axis=alt.Axis(
+                    title=None, format='%d/%m', grid=False)),
+                y=alt.Y('Peso:Q', scale=alt.Scale(zero=False, padding=20),
+                        axis=alt.Axis(title='Peso (kg)', gridColor='#333'))
+            )
+
+            # 2. Área (Gradiente)
+            area = alt.Chart(df_chart).mark_area(
+                interpolate='monotone',
+                opacity=0.3
+            ).encode(
+                x='Date:T',
+                y='Peso:Q',
+                color=alt.value(alt.Gradient(
+                    gradient='linear',
+                    stops=[alt.GradientStop(color='#00f2ff', offset=0),
+                           alt.GradientStop(color='rgba(0, 242, 255, 0)', offset=1)],
+                    x1=1, x2=1, y1=1, y2=0
+                ))
+            )
+
+            # 3. Pontos (Brilho)
+            points = line.mark_circle(size=80, color='#0e1117', stroke='#00f2ff', strokeWidth=2).encode(
+                tooltip=['Data', 'Peso', 'IMC']
+            )
+
+            # 4. Régua Vertical
+            rule = alt.Chart(df_chart).mark_rule(color='#555').encode(
+                x='Date:T',
+                opacity=alt.condition(nearest, alt.value(1), alt.value(0)),
+                tooltip=['Data', 'Peso', 'IMC']
+            ).add_params(nearest)
+
+            # Juntando tudo
+            final_chart = (area + line + points + rule).properties(
+                height=350
+            ).interactive()
+
+            st.altair_chart(final_chart, use_container_width=True)
 
     # ==========================
     # ABA 2: GRIMÓRIO (TREINO)
@@ -430,38 +489,40 @@ if verificar_senha():
     # ABA 3: BIBLIOTECA (MAGE)
     # ==========================
     elif nav == "📚 Biblioteca":
-        c1, c2 = st.columns([3, 1])
-        c1.subheader("Biblioteca Arcana")
-        c2.metric("Inteligência (MP)", f"{xp_int} XP")
+        c_mage1, c_mage2 = st.columns([3, 1])
+        c_mage1.subheader("Biblioteca Arcana")
+        c_mage2.metric("Inteligência (MP)", f"{xp_int} XP")
 
+        # Layout Mágico
         col_L, col_R = st.columns([1, 1])
 
         with col_L:
             st.markdown("""
             <div style="background:rgba(183, 0, 255, 0.1); padding:15px; border-radius:10px; border:1px solid #b700ff; margin-bottom:15px;">
-                <h4 style="margin:0; color:#e0b0ff">✨ Conjurar Sabedoria</h4>
-                <small style="color:#aaa">Livro (5XP/3pág) | Mangá (2XP/3pág) | Estudos (50XP/h)</small>
+                <h4 style="margin:0; color:#e0b0ff">✨ Atividade (Ganha XP)</h4>
+                <small style="color:#aaa">O que você está lendo ou assistindo AGORA.</small>
             </div>
             """, unsafe_allow_html=True)
 
             with st.form("study_form", clear_on_submit=True):
                 name = st.text_input(
-                    "Nome do Tomo", placeholder="Ex: O Hobbit, Python...")
-                # OPÇÕES ATUALIZADAS
-                tipo = st.radio(
-                    "Tipo", ["Livro", "Mangá/HQ", "Estudos"], horizontal=False)
+                    "Título", placeholder="Ex: One Piece, O Hobbit...")
+                # CORREÇÃO AQUI: "Mangá/HQ (2XP/Cap)"
+                tipo = st.radio("Tipo", ["Livro (5XP/3pág)", "Mangá/HQ (2XP/Cap)",
+                                "Anime (15XP/Ep)", "Estudos (50XP/h)"], horizontal=False)
+                # Label Dinâmico
                 qtd = st.number_input(
-                    "Qtd (Páginas/Horas)", min_value=1, step=1)
+                    "Qtd (Págs/Caps/Horas/Eps)", min_value=1, step=1)
 
-                if st.form_submit_button("Registrar", type="primary"):
+                if st.form_submit_button("Registrar (XP Agora)", type="primary"):
                     if name:
-                        # Mapeamento do nome visual para o nome salvo no banco
-                        real_type = tipo
-                        if tipo == "Mangá/HQ":
+                        real_type = tipo.split(" ")[0]
+                        if "Mangá" in tipo:
                             real_type = "Mangá"
 
+                        # SALVA COMO TAG 'XP'
                         new_row = pd.DataFrame([{"Usuario": user, "Data": datetime.now().strftime(
-                            "%d/%m/%Y"), "Assunto": name, "Qtd": qtd, "Tipo": real_type}])
+                            "%d/%m/%Y"), "Assunto": name, "Qtd": qtd, "Tipo": real_type, "Tag": "XP"}])
                         conn.update(worksheet="estudos", data=pd.concat(
                             [df_estudos_tot, new_row]))
                         st.cache_data.clear()
@@ -469,8 +530,11 @@ if verificar_senha():
                         gain = 0
                         if real_type == 'Livro':
                             gain = int(qtd*(5/3))
-                        elif real_type in ['Mangá', 'HQ']:
-                            gain = int(qtd*(2/3))
+                        # CORREÇÃO AQUI: XP x 2
+                        elif real_type == 'Mangá':
+                            gain = int(qtd*2)
+                        elif real_type == 'Anime':
+                            gain = int(qtd*15)
                         else:
                             gain = qtd*50
 
@@ -481,48 +545,155 @@ if verificar_senha():
                         st.warning("Nome obrigatório")
 
         with col_R:
-            st.caption("📜 Pergaminhos Recentes")
+            st.caption("📜 Atividades Recentes (Ativos)")
             if not df_e.empty:
-                recents = df_e.iloc[::-1].head(4)
-                for _, row in recents.iterrows():
-                    t = row['Tipo']
-                    # TAG ATUALIZADA
-                    if t in ['Estudos', 'Curso']:
-                        tag_cls = "tag-estudos"
-                        unit = "h"
-                    elif t in ['Mangá', 'HQ']:
-                        tag_cls = "tag-hq"
-                        unit = "pág"
-                    else:
-                        tag_cls = "tag-livro"
-                        unit = "pág"
+                # FILTRO APENAS 'XP'
+                df_xp = df_e[df_e['Tag'] == 'XP'].copy()
+                if not df_xp.empty:
+                    recents = df_xp.iloc[::-1].head(4)
+                    for _, row in recents.iterrows():
+                        t = row['Tipo']
+                        unit = "unid"
+                        if t in ['Estudos', 'Curso']:
+                            tag_cls = "tag-estudos"
+                            unit = "h"
+                        elif t == 'Anime':
+                            tag_cls = "tag-anime"
+                            unit = "eps"
+                        elif t in ['Mangá', 'HQ']:
+                            tag_cls = "tag-hq"
+                            unit = "caps"
+                        else:
+                            tag_cls = "tag-livro"
+                            unit = "pág"
 
-                    st.markdown(f"""
-                    <div class="mage-card">
-                        <div class="mage-title">{row['Assunto']}</div>
-                        <div class="mage-tags">
-                            <span class="tag {tag_cls}">{t}</span>
-                            <span>{int(row['Qtd'])}{unit}</span>
-                            <span class="mage-date">{row['Data']}</span>
+                        st.markdown(f"""
+                        <div class="mage-card">
+                            <div class="mage-title">{row['Assunto']}</div>
+                            <div class="mage-tags">
+                                <span class="tag {tag_cls}">{t}</span>
+                                <span>{int(row['Qtd'])}{unit}</span>
+                                <span class="mage-date">{row['Data']}</span>
+                            </div>
                         </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                        """, unsafe_allow_html=True)
+                else:
+                    st.info("Nenhuma atividade recente.")
             else:
                 st.info("O Grimório está vazio.")
 
         st.divider()
-        k1, k2 = st.columns(2)
-        # MÉTRICAS CORRIGIDAS
-        k1.metric("Páginas Lidas", int(pags))
-        k2.metric("Horas Estudadas", int(horas))
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Páginas Lidas", int(pags_livro))
+        k2.metric("Capítulos Mangá", int(caps_manga))
+        k3.metric("Animes (Eps)", int(eps_anime))
+        k4.metric("Horas Estudos", int(horas))
 
-        with st.expander("🛠️ Gerenciar Histórico"):
+        # --- TABELAS SEPARADAS ---
+        st.divider()
+        st.subheader("🗄️ Arquivos do Mago")
+
+        tab_ativo, tab_historico = st.tabs(
+            ["🔥 Registros de Atividade (XP)", "🏛️ Acervo Histórico (Sem XP)"])
+
+        # --- TAB 1: EDITAR XP ---
+        with tab_ativo:
+            st.caption(
+                "Pode editar ou excluir linhas aqui (Selecione e aperte Delete). Clique em salvar para confirmar.")
             if not df_e.empty:
-                edited_e = st.data_editor(
-                    df_e.iloc[::-1], num_rows="dynamic", use_container_width=True)
-                if st.button("Salvar Correções"):
-                    clean = df_estudos_tot[df_estudos_tot['Usuario'] != user]
-                    conn.update(worksheet="estudos",
-                                data=pd.concat([clean, edited_e]))
+                # Filtra apenas o que é XP deste usuário
+                df_xp_edit = df_e[df_e['Tag'] ==
+                                  'XP'].iloc[::-1].reset_index(drop=True)
+
+                # REORDENAÇÃO DAS COLUNAS: Assunto / Tipo / Qtd / Data
+                df_xp_edit = df_xp_edit[['Assunto', 'Tipo', 'Qtd', 'Data']]
+
+                # Editor interativo
+                edited_xp = st.data_editor(
+                    df_xp_edit,
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    column_config={
+                        "Tipo": st.column_config.SelectboxColumn("Tipo", options=["Livro", "Mangá", "Anime", "Estudos"]),
+                        "Qtd": st.column_config.NumberColumn("Qtd", min_value=1)
+                    }
+                )
+
+                if st.button("💾 Salvar Alterações (XP)"):
+                    # Recarrega o banco completo para não perder dados de outros usuários
+                    df_others = df_estudos_tot[df_estudos_tot['Usuario'] != user]
+                    df_my_lore = df_estudos_tot[(df_estudos_tot['Usuario'] == user) & (
+                        df_estudos_tot['Tag'] == 'LORE')]
+
+                    # Prepara os dados editados (garante que usuario e tag estão certos nas novas linhas)
+                    if not edited_xp.empty:
+                        edited_xp['Usuario'] = user
+                        edited_xp['Tag'] = 'XP'
+
+                    # Junta tudo e salva
+                    final_df = pd.concat([df_others, df_my_lore, edited_xp])
+                    conn.update(worksheet="estudos", data=final_df)
                     st.cache_data.clear()
                     st.rerun()
+            else:
+                st.info("Nada aqui ainda.")
+
+        # --- TAB 2: EDITAR HISTÓRICO ---
+        with tab_historico:
+            # Formulário Rápido
+            with st.expander("➕ Adicionar Rápido"):
+                with st.form("form_inventario_manual"):
+                    c_inv1, c_inv2, c_inv3 = st.columns([2, 1, 1])
+                    titulo_antigo = c_inv1.text_input("Título")
+                    tipo_antigo = c_inv2.selectbox(
+                        "Tipo", ["Livro", "Mangá", "Anime", "Estudos"])
+                    ano_antigo = c_inv3.number_input(
+                        "Ano", min_value=1990, max_value=2030, value=2024)
+
+                    if st.form_submit_button("Adicionar"):
+                        if titulo_antigo:
+                            dt = f"01/01/{ano_antigo}"
+                            novo = pd.DataFrame(
+                                [{"Usuario": user, "Data": dt, "Assunto": titulo_antigo, "Qtd": 0, "Tipo": tipo_antigo, "Tag": "LORE"}])
+                            conn.update(worksheet="estudos",
+                                        data=pd.concat([df_estudos_tot, novo]))
+                            st.cache_data.clear()
+                            st.rerun()
+
+            st.divider()
+
+            # Editor da Tabela Histórica
+            if not df_e.empty:
+                df_lore_edit = df_e[df_e['Tag'] ==
+                                    'LORE'].iloc[::-1].reset_index(drop=True)
+
+                # REORDENAÇÃO DAS COLUNAS: Assunto / Tipo / Data
+                df_lore_edit = df_lore_edit[['Assunto', 'Tipo', 'Data']]
+
+                st.caption("Edite ou exclua itens do seu passado.")
+                edited_lore = st.data_editor(
+                    df_lore_edit,
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    column_config={
+                        "Tipo": st.column_config.SelectboxColumn("Tipo", options=["Livro", "Mangá", "Anime", "Estudos"])
+                    }
+                )
+
+                if st.button("💾 Salvar Alterações (Histórico)"):
+                    # Mesma lógica de preservação
+                    df_others = df_estudos_tot[df_estudos_tot['Usuario'] != user]
+                    df_my_xp = df_estudos_tot[(df_estudos_tot['Usuario'] == user) & (
+                        df_estudos_tot['Tag'] == 'XP')]
+
+                    if not edited_lore.empty:
+                        edited_lore['Usuario'] = user
+                        edited_lore['Tag'] = 'LORE'
+                        edited_lore['Qtd'] = 0  # Garante 0
+
+                    final_df = pd.concat([df_others, df_my_xp, edited_lore])
+                    conn.update(worksheet="estudos", data=final_df)
+                    st.cache_data.clear()
+                    st.rerun()
+            else:
+                st.info("Nenhum item no histórico antigo.")
