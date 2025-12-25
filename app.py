@@ -167,18 +167,18 @@ def get_neon_color(treino_name):
     return "#333"
 
 
-# CSS Aprimorado (COM NEON)
+# CSS Aprimorado (CORES SUAVIZADAS)
 st.markdown("""
     <style>
-    /* Definição das Cores Neon */
+    /* Definição das Cores Neon - SUAVIZADAS */
     :root {
-        --neon-a: #00f2ff; /* Ciano Elétrico */
-        --neon-b: #ffea00; /* Amarelo Brilhante */
-        --neon-c: #39ff14; /* Verde Neon */
-        --neon-d: #ff5e00; /* Laranja Fogo */
-        --neon-e: #b700ff; /* Roxo Elétrico */
-        --neon-cardio: #ff00d4; /* Pink Neon */
-        --neon-rest: #ff0000; /* Vermelho Puro */
+        --neon-a: #00bcd4; /* Ciano mais calmo */
+        --neon-b: #ffd700; /* Dourado */
+        --neon-c: #32cd32; /* Verde Lima */
+        --neon-d: #ff8c00; /* Laranja Escuro */
+        --neon-e: #9932cc; /* Orquídea Escura */
+        --neon-cardio: #ff1493; /* Deep Pink */
+        --neon-rest: #cd5c5c; /* Vermelho Indiano (menos agressivo) */
     }
 
     .stApp { background-color: #0e1117; }
@@ -206,11 +206,10 @@ st.markdown("""
         padding: 8px;
         border-radius: 5px 5px 0 0;
         margin-bottom: 0px;
-        color: black; /* Texto preto para contraste no neon */
-        text-shadow: 0px 0px 2px rgba(255,255,255,0.6); /* Leve brilho branco no texto preto */
+        color: black;
         text-transform: uppercase;
         font-size: 0.9em;
-        /* A box-shadow de brilho será aplicada inline no Python */
+        /* Box shadow aplicado via Python para controle de cor */
     }
     .day-body {
         background-color: rgba(255,255,255,0.03);
@@ -502,7 +501,7 @@ if verificar_senha():
         st.divider()
 
         # =====================================================================
-        # === 📅 ÁREA DA AGENDA SEMANAL (CALENDÁRIO VISUAL NEON) ===
+        # === 📅 ÁREA DA AGENDA SEMANAL (CALENDÁRIO VISUAL) ===
         # =====================================================================
         st.subheader("📅 Cronograma Semanal")
 
@@ -511,12 +510,11 @@ if verificar_senha():
             "Defina sua rotina. O calendário abaixo se atualizará automaticamente.")
         col_ag2.metric("Poder de Combate", f"{int(volume_total)} kg")
 
-        # 1. Visualização do Calendário (Estilo Tabela Neon - AGORA SEMPRE VISÍVEL)
+        # 1. Visualização do Calendário (Estilo Tabela Neon Suavizada)
         # Prepara dados padrão se não houver agenda
         dias_semana = ['Segunda', 'Terca', 'Quarta',
                        'Quinta', 'Sexta', 'Sabado', 'Domingo']
 
-        # Cria um dicionário com a rotina atual OU padrão "DESCANSO"
         rotina_display = {d: "DESCANSO" for d in dias_semana}
         if not df_a_user.empty:
             for d in dias_semana:
@@ -532,9 +530,9 @@ if verificar_senha():
             cor_fundo = get_neon_color(treino_dia)
 
             with cols_cal[i]:
-                # Cabeçalho com brilho neon
+                # Cabeçalho com brilho neon reduzido (sem inset shadow forte)
                 st.markdown(
-                    f"""<div class='day-header' style='background-color: {cor_fundo}; box-shadow: 0 0 10px {cor_fundo}, 0 0 20px {cor_fundo} inset;'>{dias_display[dia_key]}</div>""",
+                    f"""<div class='day-header' style='background-color: {cor_fundo}; box-shadow: 0 0 10px {cor_fundo};'>{dias_display[dia_key]}</div>""",
                     unsafe_allow_html=True
                 )
 
@@ -550,12 +548,13 @@ if verificar_senha():
                     else:
                         conteudo_html += "<small>Vazio</small>"
                 else:
-                    conteudo_html += "<div style='text-align:center; padding-top:20px; color: #666'>💤</div>"
+                    # Emoji removido, apenas texto discreto ou vazio
+                    conteudo_html += "<div style='text-align:center; padding-top:20px; color: #555'>Descanso</div>"
 
                 st.markdown(
                     f"<div class='day-body'>{conteudo_html}</div>", unsafe_allow_html=True)
 
-        # 2. Configuração da Agenda (MOVIDO PARA BAIXO)
+        # 2. Configuração da Agenda (EMBAIXO)
         with st.expander("⚙️ Editar Rotina Semanal", expanded=False):
             opcoes_treino_agenda = ["DESCANSO"] + \
                 sorted(df_t_user['Treino'].unique().tolist())
@@ -565,12 +564,9 @@ if verificar_senha():
                 selecoes = {}
                 for i, dia in enumerate(dias_semana):
                     with cols_cfg[i]:
-                        # Valor atual selecionado
                         val_atual = rotina_display[dia]
-                        # Garante que o valor atual existe na lista de opções (evita erro se um treino for deletado)
                         idx = opcoes_treino_agenda.index(
                             val_atual) if val_atual in opcoes_treino_agenda else 0
-
                         selecoes[dia] = st.selectbox(
                             dia[:3], options=opcoes_treino_agenda, index=idx)
 
@@ -631,7 +627,7 @@ if verificar_senha():
                 st.download_button("📜 Baixar Ficha (PDF)", data=gerar_pdf(
                     df_t_user), file_name="ficha_rpg.pdf", mime="application/pdf")
 
-        # --- VISUALIZAÇÃO GERAL DOS TREINOS (ESTILO NEON CARD) ---
+        # --- VISUALIZAÇÃO GERAL DOS TREINOS (ESTILO NEON CARD SUAVIZADO) ---
         st.divider()
         st.subheader("📋 Visualização da Ficha Completa")
 
@@ -652,25 +648,23 @@ if verificar_senha():
                     lambda x: f"{int(x)}")
                 df_display['KG'] = df_display['KG'].apply(lambda x: f"{x} kg")
 
-                # Pega a cor neon
                 cor_header = get_neon_color(treino)
 
                 container_usado = cols[i]
 
                 with container_usado:
-                    # ESTILO NEON CARD (Borda brilhante e Título brilhante)
+                    # ESTILO CARD (Sombra reduzida)
                     st.markdown(f"""
                         <div style="
                             border: 1px solid rgba(255,255,255,0.1);
                             border-left: 5px solid {cor_header};
-                            /* Adiciona o brilho neon na borda esquerda */
-                            box-shadow: -3px 0 15px {cor_header}, inset 0 0 10px rgba(0,0,0,0.5);
+                            box-shadow: -3px 0 10px {cor_header}, inset 0 0 5px rgba(0,0,0,0.5);
                             background-color: rgba(255, 255, 255, 0.03);
                             border-radius: 5px;
                             padding: 10px;
                             margin-bottom: 15px;
                         ">
-                        <h4 style="margin: 0; padding-bottom: 10px; color: {cor_header}; text-shadow: 0 0 8px {cor_header};">{treino}</h4>
+                        <h4 style="margin: 0; padding-bottom: 10px; color: {cor_header}; text-shadow: 0 0 5px {cor_header};">{treino}</h4>
                     """, unsafe_allow_html=True)
 
                     st.dataframe(
