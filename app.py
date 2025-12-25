@@ -16,9 +16,12 @@ st.set_page_config(page_title="Diário de Treino RPG",
 @st.cache_data(ttl=5)
 def carregar_dados_direto(aba):
     """Lê os dados da planilha usando o link de exportação CSV direta"""
-    spreadsheet_id = "1c7NZQWQv_gV9KFvSnFN8tQpUzJqpj8zEu_35aqTUWHg"
-    url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/gviz/tq?tqx=out:csv&sheet={aba}"
-    return pd.read_csv(url)
+    try:
+        spreadsheet_id = "1c7NZQWQv_gV9KFvSnFN8tQpUzJqpj8zEu_35aqTUWHg"
+        url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/gviz/tq?tqx=out:csv&sheet={aba}"
+        return pd.read_csv(url)
+    except:
+        return pd.DataFrame()  # Retorna vazio se a aba não existir ainda
 
 # --- CONFIGURAÇÃO DE SEGURANÇA ---
 
@@ -44,7 +47,7 @@ def verificar_senha():
                     conn = st.connection("gsheets", type=GSheetsConnection)
                     df_users = carregar_dados_direto("usuarios")
 
-                    if novo_u in df_users['Usuario'].values:
+                    if not df_users.empty and novo_u in df_users['Usuario'].values:
                         st.error("Este herói já existe nas lendas!")
                     else:
                         novo_reg = pd.DataFrame(
@@ -65,16 +68,19 @@ def verificar_senha():
                 if submit_login:
                     try:
                         df_users = carregar_dados_direto("usuarios")
-                        df_users['Senha'] = df_users['Senha'].astype(str)
-                        validado = df_users[(df_users['Usuario'] == user) & (
-                            df_users['Senha'] == str(senha))]
+                        if not df_users.empty:
+                            df_users['Senha'] = df_users['Senha'].astype(str)
+                            validado = df_users[(df_users['Usuario'] == user) & (
+                                df_users['Senha'] == str(senha))]
 
-                        if not validado.empty:
-                            st.session_state["autenticado"] = True
-                            st.session_state["usuario"] = user
-                            st.rerun()
+                            if not validado.empty:
+                                st.session_state["autenticado"] = True
+                                st.session_state["usuario"] = user
+                                st.rerun()
+                            else:
+                                st.error("Credenciais inválidas!")
                         else:
-                            st.error("Credenciais inválidas!")
+                            st.error("Erro ao carregar usuários.")
                     except Exception as e:
                         st.error(f"Erro de conexão: {e}")
         return False
@@ -83,66 +89,55 @@ def verificar_senha():
 # --- LÓGICA DE GAMIFICATION (RPG) ---
 
 
-def calcular_status_rpg(df_evolucao, volume_total):
+def calcular_status_rpg(df_evolucao, volume_total, df_checkins):
     # XP Baseado em Logs (Consistência) + Volume (Força)
     qtd_logs = len(df_evolucao)
+    qtd_checkins = len(df_checkins)
+
     xp_logs = qtd_logs * 150  # Cada pesagem vale 150 XP
     xp_forca = int(volume_total * 0.1)  # 10% do volume vira XP
+    xp_checkin = qtd_checkins * 25  # 25 XP por treino realizado (Check-in)
 
-    total_xp = xp_logs + xp_forca
+    total_xp = xp_logs + xp_forca + xp_checkin
 
     # Sistema de Nível (Curva simples: a cada 1000xp sobe)
     nivel = 1 + int(total_xp / 1000)
     xp_atual_nivel = total_xp % 1000
     xp_proximo = 1000
 
-    # Lógica de Títulos e Ícones (Avatares) baseada na imagem
+    # Lógica de Títulos e Ícones (Avatares)
     if nivel < 5:
         titulo = "Aldeão Iniciante"
-        icone = "👨‍🌾"  # Aldeão com chapéu de palha
+        icone = "👨‍🌾"
     elif nivel < 10:
         titulo = "Escudeiro Determinado"
-        icone = "🗡️"  # Adaga/Espada curta
+        icone = "🗡️"
     elif nivel < 20:
         titulo = "Guerreiro de Bronze"
-        icone = "⚔️"  # Espadas cruzadas
+        icone = "⚔️"
     elif nivel < 40:
         titulo = "Cavaleiro de Prata"
-        icone = "🏇"  # Cavaleiro montado
+        icone = "🏇"
     elif nivel < 60:
         titulo = "Senhor da Guerra"
-        icone = "👹"  # Máscara Oni (Lembra elmo escuro/agressivo)
+        icone = "👹"
     else:
         titulo = "Divindade do Ferro"
-        icone = "⚡"  # Poder divino
+        icone = "⚡"
 
     return nivel, total_xp, xp_atual_nivel, xp_proximo, titulo, icone
 
 
-# CSS Aprimorado (Tema Dark RPG)
+# CSS Aprimorado
 st.markdown("""
     <style>
-    /* Cores gerais */
     .stApp { background-color: #0e1117; }
-    
-    /* Métricas estilo HUD */
     [data-testid="stMetricValue"] { color: #00ffca !important; text-shadow: 0px 0px 10px rgba(0,255,202,0.5); font-family: 'Courier New', monospace; }
     .stMetric { background-color: rgba(20, 20, 40, 0.8); padding: 10px; border: 1px solid #4B0082; border-radius: 5px; box-shadow: 0 0 10px rgba(75, 0, 130, 0.2); }
-    
-    /* Barra de progresso customizada */
     .stProgress > div > div > div > div { background-image: linear-gradient(to right, #4B0082, #00ffca); }
-    
-    /* Botões */
     div.stButton > button:first-child { background-color: #2e004f; color: #d4d4d4; border: 1px solid #6A0DAD; }
     div.stButton > button:first-child:hover { background-color: #00ffca; color: black; border-color: white; box-shadow: 0px 0px 15px #00ffca; }
-    
-    /* Estilo do Avatar */
-    .avatar-icon {
-        font-size: 80px;
-        text-align: center;
-        line-height: 1.2;
-        filter: drop-shadow(0 0 10px #00ffca);
-    }
+    .avatar-icon { font-size: 80px; text-align: center; line-height: 1.2; filter: drop-shadow(0 0 10px #00ffca); }
     </style>
     """, unsafe_allow_html=True)
 
@@ -150,16 +145,23 @@ if verificar_senha():
     conn = st.connection("gsheets", type=GSheetsConnection)
     user_atual = st.session_state["usuario"]
 
-    # --- CARREGAMENTO INICIAL DE DADOS (PARA CALCULAR O RPG ANTES DE TUDO) ---
+    # --- CARREGAMENTO DE DADOS ---
     df_corpo_total = carregar_dados_direto("evolucao")
     df_treinos_total = carregar_dados_direto("treinos")
+    df_checkins_total = carregar_dados_direto("checkins")  # NOVA ABA
 
     # Filtra dados do usuário
     df_f = df_corpo_total[df_corpo_total['Usuario'] == user_atual].copy()
     df_t_user = df_treinos_total[df_treinos_total['Usuario']
                                  == user_atual].copy()
 
-    # Cálculo preliminar de volume para o RPG
+    if not df_checkins_total.empty:
+        df_c_user = df_checkins_total[df_checkins_total['Usuario'] == user_atual].copy(
+        )
+    else:
+        df_c_user = pd.DataFrame(columns=["Usuario", "Data"])
+
+    # Cálculo preliminar de volume
     try:
         for col in ['Series', 'Reps', 'KG']:
             df_t_user[col] = pd.to_numeric(df_t_user[col].astype(
@@ -169,35 +171,68 @@ if verificar_senha():
     except:
         volume_total = 0
 
-    # Calcula Stats RPG (Agora retorna o ícone também)
+    # Calcula Stats RPG (Passando df_c_user agora)
     nivel, total_xp, xp_atual, xp_prox, titulo, icone = calcular_status_rpg(
-        df_f, volume_total)
+        df_f, volume_total, df_c_user)
 
-    # --- HUD DO JOGADOR (HEADER) ---
-    # Container estilizado no topo
+    # --- HUD DO JOGADOR ---
     with st.container():
         c_avatar, c_stats, c_logout = st.columns([1, 6, 1])
-
         with c_avatar:
-            # Renderiza o ícone grande usando HTML para ficar visualmente impactante
             st.markdown(
                 f"<div class='avatar-icon'>{icone}</div>", unsafe_allow_html=True)
-
         with c_stats:
             st.markdown(f"### {user_atual} | Lvl {nivel} - *{titulo}*")
             col_xp, col_bar = st.columns([1, 4])
             col_xp.caption(f"XP: {xp_atual}/{xp_prox}")
             col_bar.progress(xp_atual / xp_prox)
-
         with c_logout:
-            st.write("")  # Espaçamento
+            st.write("")
             if st.button("🚪 Sair"):
                 st.session_state["autenticado"] = False
                 st.rerun()
 
     st.divider()
 
+    # --- LÓGICA DO CHECK-IN DIÁRIO ---
+    hoje = datetime.now().strftime("%d/%m/%Y")
+
+    # Verifica se já fez check-in hoje
+    if not df_c_user.empty and hoje in df_c_user['Data'].values:
+        checkin_feito = True
+    else:
+        checkin_feito = False
+
+    # Interface de Check-in
+    col_check1, col_check2 = st.columns([3, 1])
+    with col_check1:
+        st.markdown("### 📅 Registro de Atividade")
+        if checkin_feito:
+            st.success(f"✅ Treino de hoje ({hoje}) registrado! +25 XP ganhos.")
+        else:
+            st.warning("⚠️ Você ainda não registrou seu treino hoje.")
+            if st.button("🔥 Confirmar Treino do Dia (+25 XP)"):
+                novo_checkin = pd.DataFrame(
+                    [{"Usuario": user_atual, "Data": hoje}])
+                updated_checkins = pd.concat([df_checkins_total, novo_checkin])
+                conn.update(worksheet="checkins", data=updated_checkins)
+                st.cache_data.clear()
+                st.toast("Check-in realizado! +25 XP!", icon="🎉")
+                time.sleep(1)
+                st.rerun()
+
+    with col_check2:
+        dias_treinados = len(df_c_user)
+        st.metric("Dias Treinados", dias_treinados, delta="Total")
+
+    # Histórico Visual (Calendário Simplificado)
+    if not df_c_user.empty:
+        with st.expander("📆 Ver Histórico de Datas"):
+            st.dataframe(df_c_user[['Data']].sort_values(
+                by='Data', ascending=False), use_container_width=True, hide_index=True)
+
     # --- FUNÇÃO GERAR PDF ---
+
     def gerar_pdf(df):
         pdf = FPDF()
         pdf.add_page()
@@ -218,14 +253,13 @@ if verificar_senha():
         saida = pdf.output(dest='S')
         return saida.encode('latin-1') if isinstance(saida, str) else bytes(saida)
 
-    # --- ÁREA PRINCIPAL COM ABAS ---
+    # --- ABAS ---
     aba1, aba2 = st.tabs(["📜 Atributos & Evolução", "⚔️ Grimório de Treino"])
 
     # --- ABA 1: EVOLUÇÃO ---
     with aba1:
         c_kpi1, c_kpi2 = st.columns([2, 1])
         c_kpi1.subheader("Atributos Corporais")
-
         with st.expander("📝 Registrar Novo Status (Save Game)", expanded=False):
             with st.form("entrada_dados", clear_on_submit=True):
                 col1, col2 = st.columns(2)
@@ -247,7 +281,6 @@ if verificar_senha():
                     st.rerun()
 
         if not df_f.empty:
-            # Tratamento de dados
             try:
                 p_ini = float(str(df_f['Peso'].iloc[0]).replace(',', '.'))
                 p_at = float(str(df_f['Peso'].iloc[-1]).replace(',', '.'))
@@ -255,27 +288,21 @@ if verificar_senha():
                 imc_atual = float(str(imc_raw).replace(',', '.'))
             except:
                 p_ini, p_at, imc_atual = 0.0, 0.0, 0.0
-
             evol = p_at - p_ini
-
-            # Lógica do Status do IMC (HP Bar Logic)
             if imc_atual < 18.5:
-                status, icon, cor_imc = "Buff de Agilidade (Leve)", "⚠️", "yellow"
+                status, icon = "Buff de Agilidade", "⚠️"
             elif imc_atual < 25:
-                status, icon, cor_imc = "Balanceado (Ideal)", "✅", "green"
+                status, icon = "Balanceado", "✅"
             elif imc_atual < 30:
-                status, icon, cor_imc = "Tank (Sobrepeso)", "🛡️", "orange"
+                status, icon = "Tank", "🛡️"
             else:
-                status, icon, cor_imc = "Heavy Tank (Obesidade)", "🚨", "red"
+                status, icon = "Heavy Tank", "🚨"
 
-            # EXIBIÇÃO DAS MÉTRICAS
             m1, m2, m3 = st.columns(3)
             m1.metric("Peso Inicial", f"{p_ini}kg")
             m2.metric("Peso Atual", f"{p_at}kg", delta=f"{evol:.1f}kg")
             m3.metric("Build Atual (IMC)",
                       f"{imc_atual:.2f}", delta=f"{icon} {status}", delta_color="off")
-
-            st.caption("Histórico de Loot (Peso)")
             st.area_chart(df_f, x="Data", y="Peso", color="#6A0DAD")
         else:
             st.info(
@@ -287,10 +314,7 @@ if verificar_senha():
         col_t1.subheader("⚔️ Grimório de Batalha (Ficha)")
         col_t2.metric("Poder de Combate (Volume)", f"{int(volume_total)} kg")
 
-        # --- ÁREA DE EDIÇÃO ---
         with st.expander("🛠️ Forjar/Alterar Equipamentos (Exercícios)", expanded=False):
-            st.caption(
-                "Edite seus exercícios. Aumentar a carga aumenta seu XP passivo!")
             df_ed = st.data_editor(
                 df_t_user.drop(columns=["Usuario"]),
                 use_container_width=True,
@@ -304,48 +328,38 @@ if verificar_senha():
                 },
                 key="editor_treino"
             )
-
             c1, c2 = st.columns(2)
-            if c1.button("💾 Salvar Alterações", use_container_width=True):
+            if c1.button("💾 Salvar Alterações"):
                 df_ed["Usuario"] = user_atual
                 df_outros = df_treinos_total[df_treinos_total['Usuario']
                                              != user_atual]
                 updated_treinos = pd.concat([df_outros, df_ed])
                 conn.update(worksheet="treinos", data=updated_treinos)
                 st.cache_data.clear()
-                st.toast("Grimório atualizado com sucesso!", icon="✨")
+                st.toast("Grimório atualizado!", icon="✨")
                 time.sleep(1)
                 st.rerun()
-
             if not df_t_user.empty:
-                c2.download_button("📜 Exportar Pergaminho (PDF)", data=gerar_pdf(
-                    df_t_user), file_name="ficha_rpg.pdf", mime="application/pdf", use_container_width=True)
+                c2.download_button("📜 PDF", data=gerar_pdf(
+                    df_t_user), file_name="ficha_rpg.pdf", mime="application/pdf")
 
-        # --- VISUALIZAÇÃO ---
         st.divider()
-        if df_t_user.empty:
-            st.info("Seu grimório está vazio. Adicione habilidades acima.")
-        else:
+        if not df_t_user.empty:
             treinos_unicos = sorted(df_t_user['Treino'].unique())
             cols = st.columns(len(treinos_unicos)) if len(
                 treinos_unicos) > 0 else [st.container()]
-
             for i, treino in enumerate(treinos_unicos):
                 df_subset = df_t_user[df_t_user['Treino'] == treino].drop(
                     columns=['Usuario', 'Treino'])
-
-                # Formatação visual para tabela
                 df_display = df_subset.copy()
                 df_display['Series'] = df_display['Series'].apply(
                     lambda x: f"{int(x)}")
                 df_display['Reps'] = df_display['Reps'].apply(
                     lambda x: f"{int(x)}")
                 df_display['KG'] = df_display['KG'].apply(lambda x: f"{x} kg")
-
-                container = cols[i] if len(
-                    treinos_unicos) <= 3 else st.container()
-
-                with container:
+                with cols[i] if len(treinos_unicos) <= 3 else st.container():
                     st.markdown(f"#### 🛡️ {treino}")
                     st.dataframe(
                         df_display, use_container_width=True, hide_index=True)
+        else:
+            st.info("Grimório vazio.")
